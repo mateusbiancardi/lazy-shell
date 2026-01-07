@@ -5,6 +5,7 @@
 #include <string.h>
 #include <signal.h>
 #include <errno.h>
+#include <stdlib.h>
 
 static void add_child(IshState *lasy, pid_t pid) {
     if (pid <= 0) {

@@ -1,4 +1,4 @@
-Resumo da implementacao da lsh (baseado no PDF so-trabalho-2025-2)
+Resumo da implementacao da lsh 
 
 1) Estruturas principais
 - Command: guarda ponteiros para o nome do programa e ate 3 argumentos (args[0..2]).
@@ -44,6 +44,9 @@ Comportamento exigido pelo PDF:
   imprime "Ok... voce venceu! Adeus!" e finaliza.
 - Se nao ha filhos vivos e o buffer esta vazio:
   o Ctrl-C encerra imediatamente.
+
+Mensagens:
+- As mensagens acima sao exibidas sem aspas.
 
 Implementacao:
 - last_ctrl_c guarda o timestamp do ultimo Ctrl-C.

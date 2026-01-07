@@ -5,6 +5,7 @@
 #include <err.h>
 #include <errno.h>
 #include <string.h>
+#include <sys/wait.h>
 
 
 IshState *construct()
