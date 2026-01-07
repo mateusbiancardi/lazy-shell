@@ -3,7 +3,6 @@
 #include <signal.h>
 #include <unistd.h>
 #include <termios.h>
-#include <unistd.h>  
 #include "ish.h"
 
 IshState *lasy_ptr = NULL;
@@ -18,14 +17,13 @@ void sigchld_wrapper(int sig) {
 
 int main (){
 
-    // Configuraçao pra nao imprimir o ^C no terminal,
-    // o terminal para de ecor caracteres de controle
+    // Disable ECHOCTL so ^C is not printed.
     struct termios t;
     tcgetattr(STDIN_FILENO, &t);      
     t.c_lflag &= ~ECHOCTL;            
     tcsetattr(STDIN_FILENO, TCSANOW, &t); 
 
-    // Tratamento do SIGINT (Ctrl c)
+    // SIGINT runs the lazy buffer; SIGCHLD keeps child state updated.
     signal(SIGINT, signal_wrapper);
     signal(SIGCHLD, sigchld_wrapper);
     IshState * lasy_shell = construct();

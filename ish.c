@@ -15,6 +15,7 @@ IshState *construct()
     x->last_ctrl_c = 0;
     x->has_children = 0;
     x->child_count = 0;
+    x->zombie_count = 0;
     return x;
 }
 
@@ -57,23 +58,23 @@ static char *trim_spaces(char *s) {
 void break_line(char *line, Command *cmd) {
     int i = 0;
     
-    // divide a string no primeiro espaço
+    // Split by spaces and stop at MAX_ARGS.
     char *token = strtok(line," \n");
 
     while (token != NULL && i < MAX_ARGS) {
-        // aloca memoria nova e copia o token 
+        // Copy token so the buffer can be freed later.
         cmd->args[i] = strdup(token); 
         i++;
 
-        // pega o próximo pedaço da string
+        // Move to next token.
         token = strtok(NULL, " \n");
     }
-    // ignora o restante dos tokens acima do limite
+    // Extra tokens are ignored.
     
-    // conferir essa finalizacao dos args, aparentemente é fundamental pro exec funcionar
+    // execvp expects a NULL-terminated argv.
     cmd->args[i] = NULL; 
     
-    // ajusta o nome do comando, pra facilitar uma busca
+    // Keep a direct pointer to the program name.
     if (i > 0) 
         cmd->name = cmd->args[0]; 
     
@@ -82,7 +83,7 @@ void break_line(char *line, Command *cmd) {
 
 void read_line(IshState * lasy){
 
-    // limpando o conteudo lido quando o buffer está cheio
+    // Drop input when the buffer is full.
     if (lasy->count >= MAX_BUFFER) {
         int ch;
         while ((ch = getchar()) != '\n' && ch != EOF); 
@@ -94,7 +95,7 @@ void read_line(IshState * lasy){
     
     CommandLine c = lasy->buffer[lasy->count];
     
-    // leitura da linha
+    // Read full line from stdin.
     int ret = getline(&line_buffer, &size, stdin);
 
     if (ret == -1) {
@@ -102,7 +103,7 @@ void read_line(IshState * lasy){
         return; 
     }
 
-    // remove o \n
+    // Strip trailing newline.
     line_buffer[strcspn(line_buffer, "\n")] = 0;
     char *clean_line = trim_spaces(line_buffer);
     if (clean_line[0] == '\0') {
@@ -110,7 +111,7 @@ void read_line(IshState * lasy){
         return;
     }
     
-    // verifica se existe o pipe #
+    // Detect pipe marker '#'.
     char *pipe = strchr(clean_line, '#');
 
     if(pipe !=  NULL){
@@ -155,6 +156,7 @@ void read_line(IshState * lasy){
         free_command(c.cmd2);
         return;
     }
+    // Internal commands must be on their own line.
     if (c.has_pipe == 1 && is_internal(c.cmd1->name)) {
         free_command(c.cmd1);
         free_command(c.cmd2);
@@ -179,10 +181,11 @@ void handle_sigint_ctrl_c(int sig, IshState *lasy)
     if (lasy->count > 0) {
         execute_buffer(lasy);
         delete_buffer(lasy);
-        lasy->count = 0; // Reseta buffer
+        lasy->count = 0; // Reset buffer after execution
         lasy->last_ctrl_c = 0;
     }
     else if (lasy->has_children) {
+        // Second Ctrl-C within 3 seconds allows exit when children exist.
         if (in_window) {
             printf("\nOk... você venceu! Adeus!\n");
             exit(0);
@@ -205,6 +208,12 @@ void handle_sigchld(int sig, IshState *lasy)
     int status = 0;
     pid_t pid = waitpid(-1, &status, WNOHANG);
     while (pid > 0) {
+        // Save dead child status so wait can report it later.
+        if (lasy->zombie_count < MAX_CHILDREN) {
+            lasy->zombie_pids[lasy->zombie_count] = pid;
+            lasy->zombie_status[lasy->zombie_count] = status;
+            lasy->zombie_count++;
+        }
         for (int i = 0; i < lasy->child_count; i++) {
             if (lasy->children[i] == pid) {
                 lasy->children[i] = lasy->children[lasy->child_count - 1];

@@ -2,9 +2,11 @@ CC = gcc
 CFLAGS = -Wall -g
 
 SRCS = $(wildcard *.c)
-OBJS = $(SRCS:.c=.o)
+OBJDIR = $(BIN_DIR)
+OBJS = $(SRCS:%.c=$(OBJDIR)/%.o)
 
 # Nome do executável final
+BIN_DIR = bin
 TARGET = main
 
 # Regra principal
@@ -15,9 +17,12 @@ $(TARGET): $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $^
 
 # Regra genérica para compilar .c em .o
-%.o: %.c
+$(OBJDIR)/%.o: %.c | $(BIN_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # Limpeza
 clean:
 	rm -f $(OBJS) $(TARGET)
+
+$(BIN_DIR):
+	mkdir -p $(BIN_DIR)

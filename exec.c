@@ -47,18 +47,16 @@ static void report_child_status(pid_t pid, int status) {
 }
 
 static void reap_zombies(IshState *lasy) {
-    int status = 0;
-    int found = 0;
-    pid_t pid = waitpid(-1, &status, WNOHANG);
-    while (pid > 0) {
-        report_child_status(pid, status);
-        remove_child(lasy, pid);
-        found = 1;
-        pid = waitpid(-1, &status, WNOHANG);
-    }
-    if (!found) {
+    // Use statuses stored by SIGCHLD so wait reports each dead child.
+    if (lasy->zombie_count == 0) {
         printf("Nao ha processos zumbis.\n");
+        return;
     }
+    for (int i = 0; i < lasy->zombie_count; i++) {
+        report_child_status(lasy->zombie_pids[i], lasy->zombie_status[i]);
+        remove_child(lasy, lasy->zombie_pids[i]);
+    }
+    lasy->zombie_count = 0;
 }
 
 static void exit_shell(IshState *lasy) {
@@ -81,7 +79,7 @@ static void exit_shell(IshState *lasy) {
         }
         if (!exists && group_count < MAX_CHILDREN) {
             groups[group_count++] = pgid;
-            // mata o grupo inteiro para cobrir filhos indiretos
+            // Kill the whole group to include indirect children.
             kill(-pgid, SIGTERM);
         }
     }
@@ -96,9 +94,10 @@ static void exit_shell(IshState *lasy) {
     exit(0);
 }
 
-static pid_t fork_exec(Command *cmd, pid_t group_id, int in_fd, int out_fd) {
+static pid_t fork_exec(Command *cmd, pid_t group_id, int in_fd, int out_fd, int close_fd) {
     pid_t pid = fork();
     if (pid == 0) {
+        // New background group and ignore SIGINT as required by the PDF.
         if (group_id < 0) {
             setpgid(0, 0);
         } else {
@@ -106,6 +105,9 @@ static pid_t fork_exec(Command *cmd, pid_t group_id, int in_fd, int out_fd) {
         }
         signal(SIGINT, SIG_IGN);
 
+        if (close_fd >= 0) {
+            close(close_fd);
+        }
         if (in_fd >= 0) {
             dup2(in_fd, STDIN_FILENO);
         }
@@ -173,7 +175,7 @@ void execute_command(CommandLine cmd, IshState *lasy, pid_t *group_id)
             return;
         }
 
-        pid_t pid1 = fork_exec(cmd.cmd1, *group_id, -1, fd[1]);
+        pid_t pid1 = fork_exec(cmd.cmd1, *group_id, -1, fd[1], fd[0]);
         if (pid1 < 0) {
             perror("fork");
             close(fd[0]);
@@ -184,7 +186,7 @@ void execute_command(CommandLine cmd, IshState *lasy, pid_t *group_id)
             *group_id = pid1;
         }
 
-        pid_t pid2 = fork_exec(cmd.cmd2, *group_id, fd[0], -1);
+        pid_t pid2 = fork_exec(cmd.cmd2, *group_id, fd[0], -1, fd[1]);
         if (pid2 < 0) {
             perror("fork");
             close(fd[0]);
@@ -200,7 +202,7 @@ void execute_command(CommandLine cmd, IshState *lasy, pid_t *group_id)
         return;
     }
 
-    pid_t pid = fork_exec(cmd.cmd1, *group_id, -1, -1);
+    pid_t pid = fork_exec(cmd.cmd1, *group_id, -1, -1, -1);
     if (pid < 0) {
         perror("fork");
         return;
@@ -213,6 +215,7 @@ void execute_command(CommandLine cmd, IshState *lasy, pid_t *group_id)
 
 void execute_buffer(IshState *lasy)
 {
+    // Keep the same process group for all external commands in this batch.
     pid_t group_id = -1;
     for (int i = 0; i < lasy->count; i++) {
         execute_command(lasy->buffer[i], lasy, &group_id);

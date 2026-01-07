@@ -9,8 +9,8 @@
 #define MAX_CHILDREN 128
 
 typedef struct {
-    char * name;                    // referencia do executavel
-    char * args[MAX_ARGS + 1];      // referencia de todo a string digitada, ajuda durante o exec
+    char * name;                    // executavel do comando
+    char * args[MAX_ARGS + 1];      // args[0..2] e NULL final para execvp
 }Command;
 
 typedef struct {
@@ -20,12 +20,15 @@ typedef struct {
 }CommandLine;
 
 typedef struct {
-    CommandLine buffer[MAX_BUFFER]; // armazena todos os comandos  
+    CommandLine buffer[MAX_BUFFER]; // buffer de comandos
     int count;                      // quantidade de comandos
-    time_t last_ctrl_c;             // variável de tempo pro comando Ctrl-c
-    int has_children;               // se tem algum filho rodando
+    time_t last_ctrl_c;             // timestamp do ultimo Ctrl-C
+    int has_children;               // flag de processos vivos
     pid_t children[MAX_CHILDREN];
     int child_count;
+    pid_t zombie_pids[MAX_CHILDREN];
+    int zombie_status[MAX_CHILDREN];
+    int zombie_count;
 } IshState;
 
 IshState * construct();

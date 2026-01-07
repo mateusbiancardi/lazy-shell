@@ -1,2 +1,0 @@
-- Somente "a b c" sao passados ao exec.
-- A saida deve ser "a b c".
