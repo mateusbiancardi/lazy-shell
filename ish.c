@@ -13,18 +13,44 @@ IshState *construct()
     x->count = 0;
     x->last_ctrl_c = 0;
     x->has_children = 0;
+    x->child_count = 0;
     return x;
 }
 
-void _discard_line(CommandLine c){
-    if(c.has_pipe == 1){
-        free(c.cmd1);
-        free(c.cmd2);
-    }
-    else
-        free(c.cmd1);
+static int is_internal(const char *name) {
+    return (strcmp(name, "cd") == 0 ||
+            strcmp(name, "wait") == 0 ||
+            strcmp(name, "exit") == 0);
+}
 
-}   
+static void free_command(Command *cmd) {
+    if (cmd == NULL) {
+        return;
+    }
+    for (int i = 0; i < MAX_ARGS; i++) {
+        if (cmd->args[i] != NULL) {
+            free(cmd->args[i]);
+            cmd->args[i] = NULL;
+        }
+    }
+    cmd->name = NULL;
+    free(cmd);
+}
+
+static char *trim_spaces(char *s) {
+    while (*s == ' ' || *s == '\t') {
+        s++;
+    }
+    if (*s == '\0') {
+        return s;
+    }
+    char *end = s + strlen(s) - 1;
+    while (end > s && (*end == ' ' || *end == '\t')) {
+        *end = '\0';
+        end--;
+    }
+    return s;
+}
 
 
 void break_line(char *line, Command *cmd) {
@@ -41,6 +67,7 @@ void break_line(char *line, Command *cmd) {
         // pega o próximo pedaço da string
         token = strtok(NULL, " \n");
     }
+    // ignora o restante dos tokens acima do limite
     
     // conferir essa finalizacao dos args, aparentemente é fundamental pro exec funcionar
     cmd->args[i] = NULL; 
@@ -76,20 +103,32 @@ void read_line(IshState * lasy){
 
     // remove o \n
     line_buffer[strcspn(line_buffer, "\n")] = 0;
+    char *clean_line = trim_spaces(line_buffer);
+    if (clean_line[0] == '\0') {
+        free(line_buffer);
+        return;
+    }
     
     // verifica se existe o pipe #
-    char *pipe = strchr(line_buffer, '#');
+    char *pipe = strchr(clean_line, '#');
 
     if(pipe !=  NULL){
+        if (strchr(pipe + 1, '#') != NULL) {
+            free(line_buffer);
+            return;
+        }
         c.has_pipe = 1;
 
         *pipe = '\0'; 
         
-        char *parte1 = line_buffer;
-        char *parte2 = pipe + 1;
+        char *parte1 = trim_spaces(clean_line);
+        char *parte2 = trim_spaces(pipe + 1);
 
         c.cmd1 = (Command*)malloc(sizeof(Command));
         c.cmd2 = (Command*)malloc(sizeof(Command));
+
+        memset(c.cmd1, 0, sizeof(Command));
+        memset(c.cmd2, 0, sizeof(Command));
 
         break_line(parte1, c.cmd1);
         break_line(parte2, c.cmd2);
@@ -99,7 +138,31 @@ void read_line(IshState * lasy){
         c.cmd1 = (Command*)malloc(sizeof(Command));
         c.cmd2 = NULL;
 
-        break_line(line_buffer, c.cmd1);
+        memset(c.cmd1, 0, sizeof(Command));
+        break_line(clean_line, c.cmd1);
+    }
+
+    free(line_buffer);
+
+    if (c.cmd1 == NULL || c.cmd1->name == NULL) {
+        free_command(c.cmd1);
+        free_command(c.cmd2);
+        return;
+    }
+    if (c.has_pipe == 1 && (c.cmd2 == NULL || c.cmd2->name == NULL)) {
+        free_command(c.cmd1);
+        free_command(c.cmd2);
+        return;
+    }
+    if (c.has_pipe == 1 && is_internal(c.cmd1->name)) {
+        free_command(c.cmd1);
+        free_command(c.cmd2);
+        return;
+    }
+    if (c.has_pipe == 1 && is_internal(c.cmd2->name)) {
+        free_command(c.cmd1);
+        free_command(c.cmd2);
+        return;
     }
 
     lasy->buffer[lasy->count] = c;
@@ -110,21 +173,25 @@ void handle_sigint_ctrl_c(int sig, IshState *lasy)
 {
     time_t now = time(NULL);
     double diff = difftime(now, lasy->last_ctrl_c);
-
-    // calculando se ctrl-c foi apertado 2 vezes com até 3s de diferença
-    if (lasy->last_ctrl_c != 0 && diff <= 3.0) {
-        printf("\nOk... você venceu! Adeus!\n");
-        exit(0);
-    }
-    lasy->last_ctrl_c = now;
+    int in_window = (lasy->last_ctrl_c != 0 && diff <= 3.0);
 
     if (lasy->count > 0) {
         execute_buffer(lasy);
         delete_buffer(lasy);
         lasy->count = 0; // Reseta buffer
+        lasy->last_ctrl_c = 0;
     }
     else if (lasy->has_children) {
+        if (in_window) {
+            printf("\nOk... você venceu! Adeus!\n");
+            exit(0);
+        }
         printf("\nNão posso morrer... sou lenta mas sou mãe de família!!!\n");
+        lasy->last_ctrl_c = now;
+    } 
+    else {
+        printf("\nOk... você venceu! Adeus!\n");
+        exit(0);
     } 
     
     printf("\nlsh> ");
@@ -132,15 +199,37 @@ void handle_sigint_ctrl_c(int sig, IshState *lasy)
 
 }
 
+void handle_sigchld(int sig, IshState *lasy)
+{
+    int status = 0;
+    pid_t pid = waitpid(-1, &status, WNOHANG);
+    while (pid > 0) {
+        for (int i = 0; i < lasy->child_count; i++) {
+            if (lasy->children[i] == pid) {
+                lasy->children[i] = lasy->children[lasy->child_count - 1];
+                lasy->child_count--;
+                break;
+            }
+        }
+        if (lasy->child_count == 0) {
+            lasy->has_children = 0;
+        }
+        pid = waitpid(-1, &status, WNOHANG);
+    }
+}
+
 void delete_buffer(IshState * lasy)
 {   
-    for(int i = 5; i > 0; i--){
-        if(lasy->buffer[i-1].has_pipe == 1){
-            free(lasy->buffer[i-1].cmd1);
-            free(lasy->buffer[i-1].cmd2);
+    for(int i = 0; i < lasy->count; i++){
+        if(lasy->buffer[i].has_pipe == 1){
+            free_command(lasy->buffer[i].cmd1);
+            free_command(lasy->buffer[i].cmd2);
         }
         else{
-            free(lasy->buffer[i-1].cmd1);
+            free_command(lasy->buffer[i].cmd1);
         }
+        lasy->buffer[i].cmd1 = NULL;
+        lasy->buffer[i].cmd2 = NULL;
+        lasy->buffer[i].has_pipe = 0;
     }
 }

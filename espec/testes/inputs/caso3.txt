@@ -1,0 +1,3 @@
+lsh> sleep 10
+lsh> ^C
+lsh> ^C

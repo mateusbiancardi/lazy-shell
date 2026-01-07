@@ -1,42 +1,105 @@
-Input & Parsing
-transformar texto bruto em struct. Criar um main de teste que pede uma string e imprime os campos da struct preenchida
+Resumo da implementacao da lsh (baseado no PDF so-trabalho-2025-2)
 
-    Identificação de Comandos: Ler a string usando fgets.
+1) Estruturas principais
+- Command: guarda ponteiros para o nome do programa e ate 3 argumentos (args[0..2]).
+- CommandLine: representa uma linha; pode ter 1 comando ou 2 comandos ligados por '#'.
+- IshState: buffer circular simples com ate 5 linhas, controle de Ctrl-C e filhos vivos.
 
-Separador #: Detectar se existe o caractere #. Se existir, dividir a string em duas partes.
-
-
-    Tokenização: Usar strtok para separar nome do programa e argumentos.
-
-Garantir que pegou no máximo 3 argumentos. Se tiver mais, ignorar ou avisar.Entrega: A função parsear() que recebe string e devolve a struct pronta.
-
-
+Arquivos envolvidos:
+- ish.h / ish.c: parser, buffer, sinal e controle geral.
+- exec.h / exec.c: execucao de comandos internos e externos.
+- main.c: loop do prompt e registro do handler do SIGINT.
 
 
-Exe
-Fork, exec, pipe. Não se preocupa com buffer ou quando o comando chegou.
-Criar um main de teste,  uma struct na mão ex: cmd.programa = "ls" e passe para a função e ver se roda.
+2) Entrada e parsing (ish.c)
+- read_line() usa getline para ler a linha inteira.
+- trim_spaces remove espacos nas pontas e evita linha vazia.
+- Se existir '#', a linha e separada em duas partes.
+- break_line() usa strtok para separar tokens por espaco e '\n'.
+- Limite de argumentos: so sao aceitos ate 3, o restante e ignorado.
+- Cada token valido e copiado com strdup para manter memoria propria.
 
-    Receber a struct, fazer fork(). No filho, usar execvp()4.
+Validacoes:
+- Se a linha ficar vazia apos trim, nada e enfileirado.
+- Se o comando 1 ou 2 (em caso de pipe) ficar sem nome, a linha e descartada.
 
-Background Group:  processos criados fiquem num grupo de background. Usar setpgid(0, 0) no filho.
-
-    Se tem_pipe == 1, criar pipe(), fazer dois forks. tenta  ligar a saída do primeiro na entrada do segundo.
-
-
-    Ignorar Sinais, dentro do processo filho, antes do execvp, chamar signal(SIGINT, SIG_IGN).
-
-
-Entrega: A função executar_prog() que recebe a struct e roda os processos
-
-
+Memoria:
+- free_command libera cada strdup dos args e o proprio Command.
+- delete_buffer limpa apenas os itens enfileirados.
 
 
+3) Buffer de comandos
+- O buffer suporta MAX_BUFFER = 5 linhas.
+- Se o buffer estiver cheio, a linha atual e descartada.
+- Ao apertar Ctrl-C, se houver itens no buffer, eles sao executados na ordem.
+- Ao executar, o buffer e limpo e count e zerado.
 
-O Controlador
-O Buffer (fila), o Sinal (Ctrl-c) e Comandos Internos.
 
-    crie "stubs" (funções vazias) para o parser e o executor, focando apenas na lógica da fila e do sinal.
+4) Tratamento de Ctrl-C (ish.c)
+Comportamento exigido pelo PDF:
+- Se ha comandos no buffer, executa todos e volta ao prompt.
+- Se nao ha comandos, mas ainda existem filhos vivos:
+  imprime "Nao posso morrer... sou lenta mas sou mae de familia!!!"
+- Se ha filhos vivos, Ctrl-C duas vezes com intervalo <= 3s:
+  imprime "Ok... voce venceu! Adeus!" e finaliza.
+- Se nao ha filhos vivos e o buffer esta vazio:
+  o Ctrl-C encerra imediatamente.
 
-se buffer cheio, descarta; se não, guarda.Tratamento do Ctrl-c (SIGINT), Se buffer tem itens -> Loop que chama a função da Pessoa 2 para cada item e zera o buffer
-Entrega: O main oficial que segura o buffer e chama as funções da Part 1 e Part 2.
+Implementacao:
+- last_ctrl_c guarda o timestamp do ultimo Ctrl-C.
+- handle_sigint_ctrl_c calcula a diferenca com difftime.
+
+
+5) Comandos internos (exec.c)
+O parser identifica comando interno somente quando nao ha pipe.
+- cd: usa chdir() com o caminho em args[1].
+- wait: chama waitpid(-1, ..., WNOHANG) em loop e reporta o status.
+- exit: envia SIGTERM para filhos conhecidos, espera todos terminarem e encerra.
+
+Mensagens:
+- wait informa pid e causa da morte (status ou sinal).
+- Se nao encontrar zombies, imprime mensagem informativa.
+
+
+6) Comandos externos (exec.c)
+Regra geral:
+- Cada sequencia de comandos enfileirados e executada em background.
+- Todos os filhos dessa sequencia pertencem ao mesmo grupo de processos.
+- Os filhos ignoram SIGINT.
+
+Implementacao de 1 comando:
+- fork_exec cria um filho, define o grupo (setpgid).
+- No filho: signal(SIGINT, SIG_IGN) e execvp(nome, args).
+- No pai: registra o pid no vetor children e marca has_children.
+
+Implementacao com pipe:
+- Cria pipe(fd).
+- fork do cmd1 com stdout redirecionado para fd[1].
+- fork do cmd2 com stdin redirecionado para fd[0].
+- Ambos entram no mesmo grupo (primeiro pid define o grupo).
+- Fecha descritores no pai.
+
+
+7) Controle de filhos (exec.c)
+- children[] guarda pids conhecidos para permitir wait/exit.
+- add_child/remove_child atualizam child_count e has_children.
+- wait interno usa waitpid com WNOHANG para liberar zombies.
+- exit interno manda SIGTERM e espera todos os filhos.
+
+
+8) Observacoes sobre bibliotecas
+Somente bibliotecas padrao C/POSIX foram usadas:
+- stdio.h, stdlib.h, string.h, unistd.h, signal.h, sys/wait.h, time.h
+Nao ha bibliotecas prontas que implementem shell, parser ou fila.
+
+
+9) Como testar manualmente (exemplos)
+1) make
+2) ./main
+3) Digite:
+   lsh> ls -l # grep texto
+   lsh> cd ..
+   lsh> firefox
+   lsh> Ctrl-C
+
+O Ctrl-C deve executar todos os comandos enfileirados em background.

@@ -1,0 +1,2 @@
+- O diretorio muda para "/".
+- "pwd" imprime "/".

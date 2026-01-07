@@ -1,0 +1,3 @@
+- Os comandos "echo um" e "echo dois" executam em background.
+- As linhas "um" e "dois" aparecem no terminal (a ordem pode variar).
+- O prompt "lsh>" volta imediatamente apos o Ctrl-C.

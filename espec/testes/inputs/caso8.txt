@@ -1,0 +1,2 @@
+lsh> echo a b c d e
+lsh> ^C

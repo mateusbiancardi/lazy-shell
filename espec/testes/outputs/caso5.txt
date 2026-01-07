@@ -1,0 +1,2 @@
+- O pipe e criado; "grep coc" recebe a saida de "echo cocada".
+- A linha "cocada" aparece no terminal.

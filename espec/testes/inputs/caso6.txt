@@ -1,0 +1,3 @@
+lsh> cd /
+lsh> pwd
+lsh> ^C
