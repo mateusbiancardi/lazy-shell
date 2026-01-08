@@ -17,21 +17,21 @@ void sigchld_wrapper(int sig) {
 
 int main (){
 
-    // Disable ECHOCTL so ^C is not printed.
+    // desativa echoctl para nao mostrar ctrl-c
     struct termios t;
     tcgetattr(STDIN_FILENO, &t);      
     t.c_lflag &= ~ECHOCTL;            
     tcsetattr(STDIN_FILENO, TCSANOW, &t); 
 
-    // SIGINT runs the lazy buffer; SIGCHLD keeps child state updated.
+    // sigint executa o buffer e sigchld atualiza estado dos filhos
     signal(SIGINT, signal_wrapper);
     signal(SIGCHLD, sigchld_wrapper);
     IshState * lasy_shell = construct();
+    lasy_shell->interactive = (isatty(STDIN_FILENO) && isatty(STDOUT_FILENO));
     lasy_ptr = lasy_shell;
     
     while (1)
-    {   
-        printf("lsh> ");
+    {
         read_line(lasy_shell);
     }
 

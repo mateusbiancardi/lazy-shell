@@ -1,3 +1,4 @@
-lsh> sleep 10
-lsh> ^C
-lsh> ^C
+sleep 10
+^C
+^C
+^C

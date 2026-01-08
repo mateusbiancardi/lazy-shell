@@ -1,9 +1,10 @@
 CC = gcc
-CFLAGS = -Wall -g
+CFLAGS = -Wall -g -MMD -MP
 
 SRCS = $(wildcard *.c)
 OBJDIR = $(BIN_DIR)
 OBJS = $(SRCS:%.c=$(OBJDIR)/%.o)
+DEPS = $(OBJS:.o=.d)
 
 # Nome do executável final
 BIN_DIR = bin
@@ -26,3 +27,5 @@ clean:
 
 $(BIN_DIR):
 	mkdir -p $(BIN_DIR)
+
+-include $(DEPS)

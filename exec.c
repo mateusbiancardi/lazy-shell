@@ -46,8 +46,8 @@ static void report_child_status(pid_t pid, int status) {
     printf("Processo %d terminou por causa desconhecida\n", pid);
 }
 
+// imprime e limpa zombies guardados pelo sigchld
 static void reap_zombies(IshState *lasy) {
-    // Use statuses stored by SIGCHLD so wait reports each dead child.
     if (lasy->zombie_count == 0) {
         printf("Nao ha processos zumbis.\n");
         return;
@@ -59,6 +59,7 @@ static void reap_zombies(IshState *lasy) {
     lasy->zombie_count = 0;
 }
 
+// encerra a shell matando grupos de filhos e aguardando
 static void exit_shell(IshState *lasy) {
     pid_t groups[MAX_CHILDREN];
     int group_count = 0;
@@ -79,7 +80,6 @@ static void exit_shell(IshState *lasy) {
         }
         if (!exists && group_count < MAX_CHILDREN) {
             groups[group_count++] = pgid;
-            // Kill the whole group to include indirect children.
             kill(-pgid, SIGTERM);
         }
     }
@@ -94,10 +94,10 @@ static void exit_shell(IshState *lasy) {
     exit(0);
 }
 
+// cria filho ajusta redirecoes e chama execvp
 static pid_t fork_exec(Command *cmd, pid_t group_id, int in_fd, int out_fd, int close_fd) {
     pid_t pid = fork();
     if (pid == 0) {
-        // New background group and ignore SIGINT as required by the PDF.
         if (group_id < 0) {
             setpgid(0, 0);
         } else {
@@ -128,9 +128,9 @@ static pid_t fork_exec(Command *cmd, pid_t group_id, int in_fd, int out_fd, int 
     return pid;
 }
 
+// executa comando interno ou externo
 void execute_command(CommandLine cmd, IshState *lasy, pid_t *group_id)
 {   
-    // processos internos
     if (cmd.has_pipe == 0) {
         char *prog = cmd.cmd1->name;
         
@@ -167,7 +167,6 @@ void execute_command(CommandLine cmd, IshState *lasy, pid_t *group_id)
         }
     }
 
-    // processos externos
     if (cmd.has_pipe == 1) {
         int fd[2];
         if (pipe(fd) != 0) {
@@ -213,9 +212,9 @@ void execute_command(CommandLine cmd, IshState *lasy, pid_t *group_id)
     add_child(lasy, pid);
 }
 
+// executa o buffer no mesmo grupo de processos
 void execute_buffer(IshState *lasy)
 {
-    // Keep the same process group for all external commands in this batch.
     pid_t group_id = -1;
     for (int i = 0; i < lasy->count; i++) {
         execute_command(lasy->buffer[i], lasy, &group_id);

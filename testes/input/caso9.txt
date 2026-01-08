@@ -1,1 +1,2 @@
-lsh> cd
+cd
+^C

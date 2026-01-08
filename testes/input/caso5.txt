@@ -1,2 +1,2 @@
-lsh> echo cocada # grep coc
-lsh> ^C
+echo cocada # grep coc
+^C

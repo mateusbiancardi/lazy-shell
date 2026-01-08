@@ -1,1 +1,2 @@
-lsh> exit agora
+exit agora
+^C

@@ -1,51 +1,77 @@
-Resumo da implementacao da lsh (fiel ao PDF so-trabalho-2025-2)
+Resumo da implementacao da lsh
 
 Visao geral do fluxo
-- main.c inicializa a shell, instala handlers, imprime o prompt e chama read_line().
-- read_line() faz o parsing da linha e enfileira ate 5 comandos.
+- main.c inicializa a shell, instala handlers e chama read_line().
+- read_line() transforma a linha em uma estrutura CommandLine e guarda no buffer.
 - Ctrl-C dispara a execucao do buffer (internos + externos) e limpa a fila.
+- efeito disso: a shell nao executa nada enquanto o usuario digita, so quando ele aperta Ctrl-C.
 
 Arquivos e responsabilidades
 
 main.c
 - Desativa ECHOCTL para nao mostrar ^C.
 - Registra SIGINT (Ctrl-C) e SIGCHLD.
-- Mantem o loop do prompt e chama read_line().
+- Mantem o loop principal e chama read_line().
 
 ish.h
 - Define limites (MAX_BUFFER, MAX_ARGS) e estruturas.
-- Command: nome do executavel e ate 3 argumentos.
-- CommandLine: uma linha, com 1 comando ou 2 ligados por '#'.
-- IshState: buffer, contadores, filhos vivos e lista de zombies.
+- Command: representa um programa externo e seus argumentos.
+  - name aponta para args[0], que e o executavel.
+  - args guarda no maximo 3 argumentos e termina com NULL para o execvp.
+  - efeito: se o usuario digitar mais de 3 argumentos, o resto e ignorado.
+- CommandLine: representa uma linha digitada.
+  - has_pipe diz se a linha tem '#'.
+  - cmd1 e cmd2 guardam os dois comandos em caso de pipe.
+  - efeito: no maximo 2 comandos externos por linha.
+- IshState: estado global da shell.
+  - buffer e a fila de ate 5 linhas.
+  - count indica quantos itens estao enfileirados.
+  - last_ctrl_c guarda o horario do ultimo Ctrl-C.
+  - has_children e child_count indicam processos em execucao.
+  - zombie_pids/status guardam filhos finalizados para o comando wait.
 
 ish.c
 - construct(): inicializa o estado da shell.
+
+parser.c
 - trim_spaces()/break_line(): limpeza e tokenizacao.
 - read_line():
   - descarta linhas vazias e o 6o comando.
   - separa por '#', limitando a 2 comandos.
   - ignora comandos internos quando aparecem com '#'.
+- ex: "cd / # ls" e descartado porque interno nao pode usar pipe.
+- delete_buffer(): libera memoria do buffer.
+  - efeito: evita vazamento das strings criadas com strdup.
+
+signals.c
 - handle_sigint_ctrl_c():
   - se ha buffer: executa tudo e limpa.
   - se ha filhos vivos e Ctrl-C duplo em 3s: encerra com mensagem.
   - se nao ha filhos vivos: encerra com mensagem.
+- ex: se o usuario digitar 3 comandos e apertar Ctrl-C, todos executam em ordem.
 - handle_sigchld(): salva pid/status de filhos terminados.
-- delete_buffer(): libera memoria do buffer.
+  - efeito: o comando wait consegue informar a causa da morte depois.
 
 exec.h / exec.c
 - execute_buffer(): executa em ordem e mantem um unico grupo de background.
 - execute_command(): decide entre interno e externo.
 - Internos:
   - cd: muda diretorio (1 argumento).
+    - ex: "cd /" muda o diretorio atual; "cd" sozinho imprime erro.
   - wait: lista e libera zombies salvos pelo SIGCHLD.
+    - ex: depois de "sleep 1", um "wait" mostra o pid e o status.
   - exit: encerra apos matar grupos de filhos e aguardar.
+    - efeito: fecha a shell so depois de liberar todos os filhos.
 - Externos:
   - fork/execvp para cada comando.
   - pipe com '#': dup2 para redirecionar stdout->stdin.
+    - ex: "echo ok # grep o" manda a saida do echo para o grep.
   - setpgid para colocar todos no mesmo grupo de background.
+    - efeito: todos os externos do buffer ficam no mesmo grupo.
   - SIGINT ignorado nos filhos.
+    - efeito: Ctrl-C do usuario nao mata os filhos, so a shell decide.
 
-Regras do PDF atendidas
+Regras atendidas
 - Buffer de 5 linhas; acima disso, descarta.
 - Maximo de 3 argumentos por comando.
 - Pipe com '#': 2 comandos externos por linha.
@@ -58,9 +84,8 @@ Regras do PDF atendidas
   - sem filhos vivos: encerra imediatamente com a mesma mensagem.
 - wait informa pid e causa de morte de cada filho finalizado.
 
-Bibliotecas usadas (apenas basicas C/POSIX)
+Bibliotecas usadas
 stdio.h, stdlib.h, string.h, unistd.h, signal.h, sys/wait.h, termios.h, time.h
-Nao ha bibliotecas prontas de shell, parser ou fila.
 
 Testes
 - Entradas: testes/input
@@ -70,6 +95,24 @@ Testes
 
 Pontos-chave para apresentar
 - Por que o buffer so executa no Ctrl-C (shell preguiçosa).
+  - a ideia da shell e ser lenta, entao a linha digitada vira um item no buffer.
+  - o handler de ctrl-c chama execute_buffer e esvazia a fila, simulando o usuario "perdendo a paciencia".
+  - isso permite digitar varios comandos e soltar todos de uma vez, como o enunciado pede.
+  - ex: "ls", "cd ..", "firefox" so executam depois do Ctrl-C.
 - Como o '#' cria um pipe (dup2 e pipe).
+  - o parser divide a linha em cmd1 e cmd2 ao encontrar '#'.
+  - em exec.c, pipe() cria fd[0] e fd[1].
+  - o filho do cmd1 faz dup2(fd[1], STDOUT_FILENO) e o do cmd2 dup2(fd[0], STDIN_FILENO).
+  - assim a saida do cmd1 vira a entrada do cmd2
+  - ex: "ls # grep txt" so mostra linhas do ls com "txt".
 - Por que usar setpgid e SIGINT ignorado nos filhos.
+  - processos externos rodem em background e no mesmo grupo.
+  - setpgid cria um grupo novo para o primeiro filho e o resto entra nele.
+  - signal(SIGINT, SIG_IGN) evita que ctrl-c do terminal mate os filhos.
+  - o grupo tambem facilita matar todos no exit com kill(-pgid, SIGTERM).
+  - efeito: a shell continua viva mesmo com Ctrl-C no terminal.
 - Como o wait usa os status guardados pelo SIGCHLD.
+  - quando um filho termina, o handler SIGCHLD salva pid e status em arrays.
+  - o comando interno wait apenas imprime esses status e limpa a lista.
+  - isso evita perder informacao e segue a regra de liberar zombies sob demanda.
+  - ex: se "sleep 1" termina, um "wait" depois informa o pid e o status.
