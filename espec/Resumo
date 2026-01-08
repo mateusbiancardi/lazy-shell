@@ -29,12 +29,12 @@ exec.h      → Interface do módulo de execução
 ```c
 typedef struct {
     char *name;                  // Nome do executável (aponta para args[0])
-    char *args[MAX_ARGS + 1];    // Programa + até 3 argumentos + NULL
+    char *args[MAX_ARGS + 2];    // Programa + até 3 argumentos + NULL
 } Command;
 ```
 - Representa um comando individual
 - `name` é sempre igual a `args[0]`
-- `args[MAX_ARGS]` é sempre NULL (requerido pelo execvp)
+- `args[MAX_ARGS + 1]` é sempre NULL (requerido pelo execvp)
 
 #### CommandLine
 ```c
@@ -96,10 +96,10 @@ typedef struct {
    → Encontrou: divide em cmd1 e cmd2
    → Mais de um '#': linha inválida, descarta
    
-6. Tokeniza cada parte com tokenize_command()
+6. Tokeniza cada parte com break_line()
    → Usa strtok() para separar por espaços
    → Copia strings com strdup()
-   → Limita a MAX_ARGS (programa + 3 argumentos)
+   → Limita a MAX_ARGS + 1 (programa + 3 argumentos)
    
 7. Validações:
    - Comando vazio? → descarta
@@ -130,7 +130,7 @@ void handle_sigint_ctrl_c(int sig, IshState *lasy) {
     
     // CASO 1: Há comandos no buffer?
     if (lasy->count > 0) {
-        exec_buffer(lasy);      // Executa todos
+        execute_buffer(lasy);      // Executa todos
         delete_buffer(lasy);       // Libera memória
         lasy->count = 0;           // Esvazia buffer
         lasy->last_ctrl_c = 0;     // Reseta timestamp
@@ -471,14 +471,14 @@ if (cmd.has_pipe == 0) {
 }
 ```
 
-### 4.3 exec_buffer() - Execução do Buffer
+### 4.3 execute_buffer() - Execução do Buffer
 
 ```c
-void exec_buffer(IshState *lasy) {
+void execute_buffer(IshState *lasy) {
     pid_t group_id = -1;  // Começa sem grupo
     
     for (int i = 0; i < lasy->count; i++) {
-        exec_command(lasy->buffer[i], lasy, &group_id);
+        execute_command(lasy->buffer[i], lasy, &group_id);
         // group_id é passado por referência
         // Primeiro externo cria o grupo
         // Demais entram no mesmo grupo
@@ -491,18 +491,18 @@ void exec_buffer(IshState *lasy) {
 Buffer: ["ls", "cd ..", "ps aux"]
 group_id inicial: -1
 
-1. exec_command("ls")
+1. execute_command("ls")
    - Externo, group_id == -1
    - fork_exec cria processo PID 1234
    - setpgid(0, 0) → cria grupo 1234
    - group_id = 1234
 
-2. exec_command("cd ..")
+2. execute_command("cd ..")
    - Interno
    - chdir("..") no processo pai
    - group_id continua 1234
 
-3. exec_command("ps aux")
+3. execute_command("ps aux")
    - Externo, group_id == 1234
    - fork_exec cria processo PID 1235
    - setpgid(0, 1234) → entra no grupo 1234
@@ -659,7 +659,7 @@ Handlers de sinais devem ser seguros:
 │        HANDLE_SIGINT_CTRL_C()               │
 │                                             │
 │  Buffer tem comandos?                       │
-│    SIM → exec_buffer()                   │
+│    SIM → execute_buffer()                   │
 │         delete_buffer()                     │
 │         retorna ao loop                     │
 │                                             │
@@ -676,7 +676,7 @@ Handlers de sinais devem ser seguros:
 │         exec_BUFFER()                    │
 │  group_id = -1                             │
 │  for cada comando:                         │
-│    exec_command()                       │
+│    execute_command()                       │
 └─────────────┬───────────────────────────────┘
               │
               ▼
@@ -808,7 +808,7 @@ cmd->args[i] = strdup(token);
 
 ### 8.3 Por que group_id por referência?
 ```c
-void exec_command(CommandLine cmd, IshState *lasy, pid_t *group_id)
+void execute_command(CommandLine cmd, IshState *lasy, pid_t *group_id)
 ```
 - Primeiro comando cria o grupo
 - Demais comandos entram no mesmo grupo
@@ -831,7 +831,7 @@ if (in_fd > STDERR_FILENO) close(in_fd);
    - Acima disso, comandos são descartados
    
 2. **Máximo 3 argumentos por comando**
-   - MAX_ARGS = 4 (programa + 3 argumentos)
+   - MAX_ARGS = 3 (argumentos, sem contar o programa)
    
 3. **Apenas 2 comandos por pipe**
    - Pipe simples com '#'

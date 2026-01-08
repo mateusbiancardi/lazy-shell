@@ -3,7 +3,7 @@
 
 #include "ish.h"
 
-void execute_command(CommandLine cmd, IshState *lasy, pid_t *group_id);
+void execute_command(CommandLine cmd);
 void execute_buffer(IshState *lasy);
 
 #endif // EXEC_C

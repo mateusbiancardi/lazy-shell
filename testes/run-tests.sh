@@ -5,6 +5,7 @@ root_dir="$(cd "$(dirname "$0")/.." && pwd)"
 inputs_dir="$root_dir/testes/input"
 outputs_dir="$root_dir/testes/output"
 results_dir="$root_dir/testes/result"
+shell_bin="$root_dir/main"
 
 mkdir -p "$results_dir"
 
@@ -26,7 +27,7 @@ gen_result() {
   fifo="$(mktemp -u)"
   mkfifo "$fifo"
 
-  "$root_dir/main" < "$fifo" > "$out_file" &
+  "$shell_bin" < "$fifo" > "$out_file" &
   local pid=$!
 
   exec 3> "$fifo"

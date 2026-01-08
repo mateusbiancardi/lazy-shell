@@ -1,0 +1,42 @@
+Input & Parsing
+transformar texto bruto em struct. Criar um main de teste que pede uma string e imprime os campos da struct preenchida
+
+    Identificação de Comandos: Ler a string usando fgets.
+
+Separador #: Detectar se existe o caractere #. Se existir, dividir a string em duas partes.
+
+
+    Tokenização: Usar strtok para separar nome do programa e argumentos.
+
+Garantir que pegou no máximo 3 argumentos. Se tiver mais, ignorar ou avisar.Entrega: A função parsear() que recebe string e devolve a struct pronta.
+
+
+
+
+Exe
+Fork, exec, pipe. Não se preocupa com buffer ou quando o comando chegou.
+Criar um main de teste,  uma struct na mão ex: cmd.programa = "ls" e passe para a função e ver se roda.
+
+    Receber a struct, fazer fork(). No filho, usar execvp()4.
+
+Background Group:  processos criados fiquem num grupo de background. Usar setpgid(0, 0) no filho.
+
+    Se tem_pipe == 1, criar pipe(), fazer dois forks. tenta  ligar a saída do primeiro na entrada do segundo.
+
+
+    Ignorar Sinais, dentro do processo filho, antes do execvp, chamar signal(SIGINT, SIG_IGN).
+
+
+Entrega: A função executar_prog() que recebe a struct e roda os processos
+
+
+
+
+
+O Controlador
+O Buffer (fila), o Sinal (Ctrl-c) e Comandos Internos.
+
+    crie "stubs" (funções vazias) para o parser e o executor, focando apenas na lógica da fila e do sinal.
+
+se buffer cheio, descarta; se não, guarda.Tratamento do Ctrl-c (SIGINT), Se buffer tem itens -> Loop que chama a função da Pessoa 2 para cada item e zera o buffer
+Entrega: O main oficial que segura o buffer e chama as funções da Part 1 e Part 2.

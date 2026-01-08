@@ -8,33 +8,33 @@
 #include <stdlib.h>
 
 // adiciona pid a lista de filhos vivos
-static void add_child(IshState *state, pid_t pid)
+static void add_child(IshState *lasy, pid_t pid)
 {
     if (pid <= 0)
     {
         return;
     }
-    if (state->child_count < MAX_CHILDREN)
+    if (lasy->child_count < MAX_CHILDREN)
     {
-        state->children[state->child_count++] = pid;
+        lasy->children[lasy->child_count++] = pid;
     }
-    state->has_children = 1;
+    lasy->has_children = 1;
 }
 
-static void remove_child(IshState *state, pid_t pid)
+static void remove_child(IshState *lasy, pid_t pid)
 {
-    for (int i = 0; i < state->child_count; i++)
+    for (int i = 0; i < lasy->child_count; i++)
     {
-        if (state->children[i] == pid)
+        if (lasy->children[i] == pid)
         {
-            state->children[i] = state->children[state->child_count - 1];
-            state->child_count--;
+            lasy->children[i] = lasy->children[lasy->child_count - 1];
+            lasy->child_count--;
             break;
         }
     }
-    if (state->child_count == 0)
+    if (lasy->child_count == 0)
     {
-        state->has_children = 0;
+        lasy->has_children = 0;
     }
 }
 
@@ -63,31 +63,31 @@ static void report_child_status(pid_t pid, int status)
 }
 
 // comandos internos
-static void reap_zombies(IshState *state)
+static void reap_zombies(IshState *lasy)
 {
-    if (state->zombie_count == 0)
+    if (lasy->zombie_count == 0)
     {
         printf("Não há processos zumbis.\n");
         return;
     }
 
-    for (int i = 0; i < state->zombie_count; i++)
+    for (int i = 0; i < lasy->zombie_count; i++)
     {
-        report_child_status(state->zombie_pids[i],
-                            state->zombie_status[i]);
-        remove_child(state, state->zombie_pids[i]);
+        report_child_status(lasy->zombie_pids[i],
+                            lasy->zombie_status[i]);
+        remove_child(lasy, lasy->zombie_pids[i]);
     }
-    state->zombie_count = 0;
+    lasy->zombie_count = 0;
 }
 // comandos internos
-static void collect_process_groups(IshState *state, pid_t *groups,
+static void collect_process_groups(IshState *lasy, pid_t *groups,
                                    int *group_count)
 {
     *group_count = 0;
 
-    for (int i = 0; i < state->child_count; i++)
+    for (int i = 0; i < lasy->child_count; i++)
     {
-        pid_t pid = state->children[i];
+        pid_t pid = lasy->children[i];
         pid_t pgid = getpgid(pid);
 
         if (pgid < 0)
@@ -115,7 +115,7 @@ static void collect_process_groups(IshState *state, pid_t *groups,
     }
 }
 
-static void wait_all_children(IshState *state)
+static void wait_all_children(IshState *lasy)
 {
     int status;
     pid_t pid;
@@ -125,17 +125,17 @@ static void wait_all_children(IshState *state)
         report_child_status(pid, status);
     }
 
-    state->child_count = 0;
-    state->has_children = 0;
+    lasy->child_count = 0;
+    lasy->has_children = 0;
 }
 
-static void exit_shell(IshState *state)
+static void exit_shell(IshState *lasy)
 {
     pid_t groups[MAX_CHILDREN];
     int group_count;
 
-    collect_process_groups(state, groups, &group_count);
-    wait_all_children(state);
+    collect_process_groups(lasy, groups, &group_count);
+    wait_all_children(lasy);
 
     exit(0);
 }
@@ -162,25 +162,25 @@ static int handle_cd(Command *cmd)
     return 0;
 }
 
-static int handle_wait(Command *cmd, IshState *state)
+static int handle_wait(Command *cmd, IshState *lasy)
 {
     if (cmd->args[1] != NULL)
     {
         printf("wait: não aceita argumentos\n");
         return 1;
     }
-    reap_zombies(state);
+    reap_zombies(lasy);
     return 0;
 }
 
-static int handle_exit(Command *cmd, IshState *state)
+static int handle_exit(Command *cmd, IshState *lasy)
 {
     if (cmd->args[1] != NULL)
     {
         printf("exit: não aceita argumentos\n");
         return 1;
     }
-    exit_shell(state);
+    exit_shell(lasy);
     return 0;
 }
 
@@ -240,7 +240,7 @@ static pid_t fork_exec(Command *cmd, pid_t group_id, int in_fd,
     return pid;
 }
 
-static int exec_internal_command(CommandLine cmd, IshState *state)
+static int execute_internal_command(CommandLine cmd, IshState *lasy)
 {
     char *prog = cmd.cmd1->name;
 
@@ -250,18 +250,18 @@ static int exec_internal_command(CommandLine cmd, IshState *state)
     }
     if (strcmp(prog, "exit") == 0)
     {
-        return handle_exit(cmd.cmd1, state);
+        return handle_exit(cmd.cmd1, lasy);
     }
     if (strcmp(prog, "wait") == 0)
     {
-        return handle_wait(cmd.cmd1, state);
+        return handle_wait(cmd.cmd1, lasy);
     }
 
-    return -1;//nao e comando interno
+    return -1; // nao e comando interno
 }
 
 //cria processos para comandos e escreve no pipe
-static void exec_pipe_command(CommandLine cmd, IshState *state,
+static void execute_pipe_command(CommandLine cmd, IshState *lasy,
                                  pid_t *group_id)
 {
     int fd[2];
@@ -272,6 +272,7 @@ static void exec_pipe_command(CommandLine cmd, IshState *state,
         return;
     }
 
+    // cria primeiro processo - escreve no pipe
     pid_t pid1 = fork_exec(cmd.cmd1, *group_id, -1, fd[1], fd[0]);
     if (pid1 < 0)
     {
@@ -286,6 +287,7 @@ static void exec_pipe_command(CommandLine cmd, IshState *state,
         *group_id = pid1;
     }
 
+    // cria segundo processo - le do pipe
     pid_t pid2 = fork_exec(cmd.cmd2, *group_id, fd[0], -1, fd[1]);
     if (pid2 < 0)
     {
@@ -298,11 +300,11 @@ static void exec_pipe_command(CommandLine cmd, IshState *state,
     close(fd[0]);
     close(fd[1]);
 
-    add_child(state, pid1);
-    add_child(state, pid2);
+    add_child(lasy, pid1);
+    add_child(lasy, pid2);
 }
 
-static void exec_simple_command(CommandLine cmd, IshState *state,
+static void execute_simple_command(CommandLine cmd, IshState *lasy,
                                    pid_t *group_id)
 {
     pid_t pid = fork_exec(cmd.cmd1, *group_id, -1, -1, -1);
@@ -318,36 +320,38 @@ static void exec_simple_command(CommandLine cmd, IshState *state,
         *group_id = pid;
     }
 
-    add_child(state, pid);
+    add_child(lasy, pid);
 }
 
-void exec_command(CommandLine cmd, IshState *state, pid_t *group_id)
+void execute_command(CommandLine cmd, IshState *lasy, pid_t *group_id)
 {
+    // processos internos
     if (!cmd.has_pipe)
     {
-        int result = exec_internal_command(cmd, state);
+        int result = execute_internal_command(cmd, lasy);
         if (result >= 0)
         {
             return;
         }
     }
 
+    // processos externos
     if (cmd.has_pipe)
     {
-        exec_pipe_command(cmd, state, group_id);
+        execute_pipe_command(cmd, lasy, group_id);
     }
     else
     {
-        exec_simple_command(cmd, state, group_id);
+        execute_simple_command(cmd, lasy, group_id);
     }
 }
 
-void exec_buffer(IshState *state)
+void execute_buffer(IshState *lasy)
 {
     pid_t group_id = -1;
 
-    for (int i = 0; i < state->count; i++)
+    for (int i = 0; i < lasy->count; i++)
     {
-        exec_command(state->buffer[i], state, &group_id);
+        execute_command(lasy->buffer[i], lasy, &group_id);
     }
 }

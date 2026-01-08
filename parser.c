@@ -15,7 +15,7 @@ static void free_command(Command *cmd) {
         return;
     }
     
-    for (int i = 0; i < MAX_ARGS; i++) {
+    for (int i = 0; i < MAX_ARGS + 1; i++) {
         if (cmd->args[i] != NULL) {
             free(cmd->args[i]);
             cmd->args[i] = NULL;
@@ -43,18 +43,25 @@ static char *trim_spaces(char *s) {
     return s;
 }
 
-static void tokenize_command(char *line, Command *cmd) {
+static void break_line(char *line, Command *cmd) {
     int i = 0;
+    
+    // divide a string no primeiro espaco
     char *token = strtok(line, " \n");
     
-    while (token != NULL && i < MAX_ARGS) {
+    while (token != NULL && i < MAX_ARGS + 1) {
+        // aloca memoria nova e copia o token
         cmd->args[i] = strdup(token);
         i++;
+        
+        // pega o proximo pedaco da string
         token = strtok(NULL, " \n");
     }
     
+    // confere essa finalizacao dos args, fundamental pro exec funcionar
     cmd->args[i] = NULL;
     
+    // ajusta o nome do comando, pra facilitar uma busca
     if (i > 0) {
         cmd->name = cmd->args[0];
     }
@@ -98,7 +105,7 @@ static int parse_simple_command(char *line, CommandLine *c) {
         return 0;
     }
     
-    tokenize_command(line, c->cmd1);
+    break_line(line, c->cmd1);
     return 1;
 }
 
@@ -118,8 +125,8 @@ static int parse_pipe_command(char *line, char *pipe_pos, CommandLine *c) {
         return 0;
     }
     
-    tokenize_command(part1, c->cmd1);
-    tokenize_command(part2, c->cmd2);
+    break_line(part1, c->cmd1);
+    break_line(part2, c->cmd2);
     
     return 1;
 }
@@ -149,6 +156,7 @@ static char *read_input_line() {
         return NULL;
     }
     
+    // remove o \n
     line[strcspn(line, "\n")] = 0;
     return line;
 }
@@ -158,16 +166,17 @@ static void discard_overflow_input() {
     while ((ch = getchar()) != '\n' && ch != EOF);
 }
 
-void read_line(IshState *state) {
-    // le, valida e enfileira uma linha; descarta se buffer cheio.
-    if (state->count >= MAX_BUFFER) {
+void read_line(IshState *lasy) {
+    // limpando o conteudo lido quando o buffer esta cheio
+    if (lasy->count >= MAX_BUFFER) {
         discard_overflow_input();
         return;
     }
     
+    // leitura da linha
     char *line = read_input_line();
     if (line == NULL) {
-        if (!state->interactive) {
+        if (!lasy->interactive) {
             exit(0);
         }
         return;
@@ -179,6 +188,7 @@ void read_line(IshState *state) {
         return;
     }
     
+    // verifica se existe o pipe # e faz o parsing
     CommandLine c; //faz parsing
     if (!parse_line(clean, &c)) {
         free(line);
@@ -193,18 +203,18 @@ void read_line(IshState *state) {
         return;
     }
     
-    state->buffer[state->count] = c;
-    state->count++;
+    lasy->buffer[lasy->count] = c;
+    lasy->count++;
 }
 
-void delete_buffer(IshState *state) {
-    for (int i = 0; i < state->count; i++) {
-        free_command(state->buffer[i].cmd1);
-        if (state->buffer[i].has_pipe) {
-            free_command(state->buffer[i].cmd2);
+void delete_buffer(IshState *lasy) {
+    for (int i = 0; i < lasy->count; i++) {
+        free_command(lasy->buffer[i].cmd1);
+        if (lasy->buffer[i].has_pipe) {
+            free_command(lasy->buffer[i].cmd2);
         }
-        state->buffer[i].cmd1 = NULL;
-        state->buffer[i].cmd2 = NULL;
-        state->buffer[i].has_pipe = 0;
+        lasy->buffer[i].cmd1 = NULL;
+        lasy->buffer[i].cmd2 = NULL;
+        lasy->buffer[i].has_pipe = 0;
     }
 }
