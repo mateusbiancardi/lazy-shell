@@ -1,1 +1,1 @@
-cd: caminho ausente
+lsh> lsh> cd: caminho ausente

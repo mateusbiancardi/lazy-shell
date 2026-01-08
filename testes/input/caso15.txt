@@ -1,0 +1,2 @@
+echo ok#grep o
+^C

@@ -1,1 +1,1 @@
-cd: muitos argumentos
+lsh> lsh> cd: muitos argumentos

@@ -11,6 +11,10 @@ mkdir -p "$results_dir"
 pass=0
 fail=0
 
+normalize_prompted_output() {
+  sed -E 's/^(lsh> )+//' "$1" | sed '/^$/d' | sort
+}
+
 gen_result() {
   local input_file="$1"
   local base
@@ -53,7 +57,8 @@ gen_result() {
 
   if [ -f "$exp_file" ]; then
     if [[ "$base" == "caso1.txt" || "$base" == "caso13.txt" ]]; then
-      if diff -u <(sort "$exp_file") <(sort "$out_file") >/dev/null; then
+      if diff -u <(normalize_prompted_output "$exp_file") \
+        <(normalize_prompted_output "$out_file") >/dev/null; then
         echo "[ok] $base"
         pass=$((pass + 1))
       else

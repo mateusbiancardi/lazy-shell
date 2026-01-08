@@ -1,1 +1,1 @@
-a b c
+lsh> lsh> a b c

@@ -1,1 +1,1 @@
-wait: não aceita argumentos
+lsh> lsh> wait: não aceita argumentos

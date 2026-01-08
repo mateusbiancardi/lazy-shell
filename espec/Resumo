@@ -59,7 +59,7 @@ typedef struct {
     pid_t zombie_pids[MAX_CHILDREN];    // PIDs dos zombies
     int zombie_status[MAX_CHILDREN];    // Status dos zombies
     int zombie_count;                   // Quantidade de zombies
-    int interactive;                    // Para rodar o script de testes
+    int interactive;                    // Indica terminal interativo
 } IshState;
 ```
 
@@ -73,7 +73,8 @@ typedef struct {
 2. Registra handler para SIGINT (Ctrl-C)
 3. Registra handler para SIGCHLD (morte de filhos)
 4. Cria estrutura IshState
-5. Entra no loop infinito chamando read_line()
+5. Detecta modo interativo (isatty)
+6. Entra no loop infinito: imprime `lsh>` e chama read_line()
 ```
 
 ### 3.2 Leitura de Comandos (parser.c)
@@ -727,7 +728,7 @@ Handlers de sinais devem ser seguros:
 
 ## 7. CASOS DE USO E EXEMPLOS
 
-**Nota:** o programa não imprime o prompt `lsh>` no terminal. Os exemplos abaixo mantêm o prefixo apenas para seguir o estilo do PDF.
+**Nota:** o prompt `lsh>` é exibido em todas as execuções. Nos testes via arquivo/FIFO, ele aparece na saída capturada.
 
 ### Exemplo 1: Comandos Simples
 ```
@@ -939,10 +940,10 @@ A LSH implementa uma shell preguiçosa que:
 - ✅ Enfileira até 5 comandos em buffer
 - ✅ Executa somente após Ctrl-C
 - ✅ Suporta comandos internos (cd, wait, exit)
-- ✅ Cria processos externos em background no mesmo grupo
+- ✅ Cria processos externos em background no mesmo grupo (setpgid)
 - ✅ Implementa pipe com '#' entre 2 comandos
 - ✅ Filhos ignoram SIGINT
 - ✅ Ctrl-C duplo em 3s finaliza shell
-- ✅ Wait informa status de processos mortos
-- ✅ Exit mata todos os filhos antes de terminar
+- ✅ Wait informa causa da morte (status ou sinal)
+- ✅ Exit mata grupos ativos e aguarda liberação dos filhos
 - ✅ Gerenciamento robusto de memória e sinais

@@ -1,1 +1,1 @@
-exit: não aceita argumentos
+lsh> lsh> exit: não aceita argumentos

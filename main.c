@@ -29,11 +29,9 @@ static void setup_signals() {
     signal(SIGCHLD, on_sigchld);
 }
 
-static void print_prompt(const IshState *state) {
-    if (state->interactive) {
-        printf("lsh> ");
-        fflush(stdout);
-    }
+static void print_prompt(void) {
+    printf("lsh> ");
+    fflush(stdout);
 }
 
 // loop principal e leitura.
@@ -42,17 +40,17 @@ int main(void) {
     
     IshState *state = construct();
     if (state == NULL) {
-        fprintf(stderr, "Erro inicializar o shell\n");
+        fprintf(stderr, "Erro ao inicializar a shell.\n");
         return 1;
     }
     
-    state-> = (isatty(STDIN_FILENO) && isatty(STDOUT_FILENO));
+    state->interactive = (isatty(STDIN_FILENO) && isatty(STDOUT_FILENO));
     g_state = state;
     
     setup_signals();
     
     while (1) {
-        print_prompt(state);
+        print_prompt();
         read_line(state);
     }
     
