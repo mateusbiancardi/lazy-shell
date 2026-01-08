@@ -1,1 +1,1 @@
-exit: nao aceita argumentos
+exit: não aceita argumentos

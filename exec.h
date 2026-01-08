@@ -1,9 +1,9 @@
-#if !defined(EXEC_C)
-#define EXEC_C
+#ifndef EXEC_H
+#define EXEC_H
 
 #include "ish.h"
 
-void execute_command(CommandLine cmd, IshState *lasy, pid_t *group_id);
-void execute_buffer(IshState *lasy);
+void exec_command(CommandLine cmd, IshState *state, pid_t *group_id);
+void exec_buffer(IshState *state);
 
-#endif // EXEC_C
+#endif
