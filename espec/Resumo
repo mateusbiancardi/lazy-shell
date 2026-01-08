@@ -59,7 +59,7 @@ typedef struct {
     pid_t zombie_pids[MAX_CHILDREN];    // PIDs dos zombies
     int zombie_status[MAX_CHILDREN];    // Status dos zombies
     int zombie_count;                   // Quantidade de zombies
-    int interactive;                    // Terminal interativo?
+    int interactive;                    // Para rodar o script de testes
 } IshState;
 ```
 
