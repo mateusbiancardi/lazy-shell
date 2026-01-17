@@ -72,14 +72,17 @@ static int validate_command(Command *cmd) {
 }
 
 static int validate_pipe_command(CommandLine *c) {
+    // validação do primeiro comando
     if (!validate_command(c->cmd1)) {
         return 0;
     }
     
     if (c->has_pipe) {
+        // valida o segundo comando
         if (!validate_command(c->cmd2)) {
             return 0;
         }
+        // se um dos dois comandos forem internos, retorna 0
         if (is_internal(c->cmd1->name) || is_internal(c->cmd2->name)) {
             return 0;
         }
@@ -111,8 +114,10 @@ static int parse_simple_command(char *line, CommandLine *c) {
 
 static int parse_pipe_command(char *line, char *pipe_pos, CommandLine *c) {
     c->has_pipe = 1;
+    // substitui # por \0
     *pipe_pos = '\0';
     
+    // remove espaços desnecessários do primeiro comando e do segundo
     char *part1 = trim_spaces(line);
     char *part2 = trim_spaces(pipe_pos + 1);
     
@@ -139,6 +144,7 @@ static int parse_line(char *line, CommandLine *c) {
         return 0;
     }
     
+    // comando com pipe e comando sem pipe
     if (pipe != NULL) {
         return parse_pipe_command(line, pipe, c);
     } else {
@@ -182,6 +188,7 @@ void read_line(IshState *lasy) {
         return;
     }
     
+    // remove espaços desnecessários
     char *clean = trim_spaces(line);
     if (clean[0] == '\0') {
         free(line);
@@ -197,12 +204,14 @@ void read_line(IshState *lasy) {
     
     free(line);
     
+    // se não for valido, ignora
     if (!validate_pipe_command(&c)) {
         free_command(c.cmd1);
         free_command(c.cmd2);
         return;
     }
     
+    // se for valido, adiciona ao buffer
     lasy->buffer[lasy->count] = c;
     lasy->count++;
 }

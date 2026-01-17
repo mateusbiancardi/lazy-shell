@@ -39,7 +39,10 @@ int main(void) {
         return 1;
     }
     
+    // verifica se stdin e stdout são o terminal
     lasy_shell->interactive = (isatty(STDIN_FILENO) && isatty(STDOUT_FILENO));
+    
+    // ponteiro para acesso dos handle
     lasy_ptr = lasy_shell;
     
     while (1) {

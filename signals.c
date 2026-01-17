@@ -47,6 +47,7 @@ void handle_sigint_ctrl_c(int sig, IshState *lasy) {
 }
 
 static void store_zombie(IshState *lasy, pid_t pid, int status) {
+    // armazena zombie apenas se não tiver cheio
     if (lasy->zombie_count < MAX_CHILDREN) {
         lasy->zombie_pids[lasy->zombie_count] = pid;
         lasy->zombie_status[lasy->zombie_count] = status;
@@ -54,19 +55,7 @@ static void store_zombie(IshState *lasy, pid_t pid, int status) {
     }
 }
 
-static void remove_from_children(IshState *lasy, pid_t pid) {
-    for (int i = 0; i < lasy->child_count; i++) {
-        if (lasy->children[i] == pid) {
-            lasy->children[i] = lasy->children[lasy->child_count - 1];
-            lasy->child_count--;
-            break;
-        }
-    }
-    
-    if (lasy->child_count == 0) {
-        lasy->has_children = 0;
-    }
-}
+
 
 void handle_sigchld(int sig, IshState *lasy) {
     // guarda zombies para o comando wait
@@ -75,6 +64,6 @@ void handle_sigchld(int sig, IshState *lasy) {
     
     while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
         store_zombie(lasy, pid, status);
-        remove_from_children(lasy, pid);
+        remove_child(lasy, pid);
     }
 }

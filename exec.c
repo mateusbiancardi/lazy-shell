@@ -21,7 +21,7 @@ static void add_child(IshState *lasy, pid_t pid)
     lasy->has_children = 1;
 }
 
-static void remove_child(IshState *lasy, pid_t pid)
+void remove_child(IshState *lasy, pid_t pid)
 {
     for (int i = 0; i < lasy->child_count; i++)
     {
@@ -71,6 +71,7 @@ static void reap_zombies(IshState *lasy)
         return;
     }
 
+    // remove todos os zombies e reporta o status
     for (int i = 0; i < lasy->zombie_count; i++)
     {
         report_child_status(lasy->zombie_pids[i],
@@ -88,8 +89,10 @@ static void collect_process_groups(IshState *lasy, pid_t *groups,
     for (int i = 0; i < lasy->child_count; i++)
     {
         pid_t pid = lasy->children[i];
+        // pega grupo do processo
         pid_t pgid = getpgid(pid);
 
+        // se deu erro, mata o processo
         if (pgid < 0)
         {
             kill(pid, SIGTERM);
@@ -107,9 +110,12 @@ static void collect_process_groups(IshState *lasy, pid_t *groups,
             }
         }
 
+        // se o grupo não estiver adiciona
+        // evita enviar sinal 2x pro mesmo grupo
         if (!exists && *group_count < MAX_CHILDREN)
         {
             groups[(*group_count)++] = pgid;
+            // mata todos do grupo
             kill(-pgid, SIGTERM);
         }
     }
@@ -120,8 +126,10 @@ static void wait_all_children(IshState *lasy)
     int status;
     pid_t pid;
 
+    // espera qualquer filho
     while ((pid = waitpid(-1, &status, 0)) > 0)
     {
+        // reporta como esse filho terminou
         report_child_status(pid, status);
     }
 
@@ -230,7 +238,7 @@ static pid_t fork_exec(Command *cmd, pid_t group_id, int in_fd,
     pid_t pid = fork();
 
     if (pid == 0)
-    { // cria filho e executa
+    { // cria filho e faz exec
         setup_child_process(group_id, in_fd, out_fd, close_fd);
         execvp(cmd->name, cmd->args);
         perror("execvp");
