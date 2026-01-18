@@ -1,15 +1,19 @@
-//leitura e parsing de comandos
+// Leitura e transformação do texto digitado em estruturas de comando
 #include "ish.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+
+// Verificando se é um comando interno (não gera processo filho)
 static int is_internal(const char *name) {
     return (strcmp(name, "cd") == 0 ||
             strcmp(name, "wait") == 0 ||
             strcmp(name, "exit") == 0);
 }
-//gerencia memoria
+
+
+//  Libera memória de um comando e seus argumentos
 static void free_command(Command *cmd) {
     if (cmd == NULL) {
         return;
@@ -24,7 +28,9 @@ static void free_command(Command *cmd) {
     cmd->name = NULL;
     free(cmd);
 }
-//auxiliar do parsing (para strings)
+
+
+// Auxiliar do parsing, remove espaços em branco nas strings
 static char *trim_spaces(char *s) {
     while (*s == ' ' || *s == '\t') {
         s++;
@@ -43,46 +49,49 @@ static char *trim_spaces(char *s) {
     return s;
 }
 
+
 static void break_line(char *line, Command *cmd) {
     int i = 0;
     
-    // divide a string no primeiro espaco
+    // Divide a string no primeiro espaco
     char *token = strtok(line, " \n");
     
     while (token != NULL && i < MAX_ARGS + 1) {
-        // aloca memoria nova e copia o token
+        // Aloca memoria nova e copia o token
         cmd->args[i] = strdup(token);
         i++;
         
-        // pega o proximo pedaco da string
+        // Pega o proximo pedaco da string
         token = strtok(NULL, " \n");
     }
     
-    // confere essa finalizacao dos args, fundamental pro exec funcionar
+    // Garante que a lista de argumentos termine com NULL para o exec funcionar
     cmd->args[i] = NULL;
     
-    // ajusta o nome do comando, pra facilitar uma busca
-    if (i > 0) {
+    // Ajusta o nome do comando, pra facilitar uma busca
+    if (i > 0) 
         cmd->name = cmd->args[0];
-    }
+    
 }
+
 
 static int validate_command(Command *cmd) {
     return cmd != NULL && cmd->name != NULL;
 }
 
+
 static int validate_pipe_command(CommandLine *c) {
-    // validação do primeiro comando
+    // Validação do primeiro comando
     if (!validate_command(c->cmd1)) {
         return 0;
     }
     
     if (c->has_pipe) {
-        // valida o segundo comando
+        // Valida o segundo comando
         if (!validate_command(c->cmd2)) {
             return 0;
         }
-        // se um dos dois comandos forem internos, retorna 0
+        // Se um dos dois comandos forem internos, retorna 0
         if (is_internal(c->cmd1->name) || is_internal(c->cmd2->name)) {
             return 0;
         }
@@ -90,7 +99,9 @@ static int validate_pipe_command(CommandLine *c) {
     
     return 1;
 }
-//parsing de linhas
+
+
+// Aloca memória para um novo comando
 static Command *create_command() {
     Command *cmd = (Command *)malloc(sizeof(Command));
     if (cmd != NULL) {
@@ -99,6 +110,7 @@ static Command *create_command() {
     return cmd;
 }
 
+// Prepara uma estrutura para um comando simples sem pipe
 static int parse_simple_command(char *line, CommandLine *c) {
     c->has_pipe = 0;
     c->cmd1 = create_command();
@@ -112,12 +124,13 @@ static int parse_simple_command(char *line, CommandLine *c) {
     return 1;
 }
 
+
 static int parse_pipe_command(char *line, char *pipe_pos, CommandLine *c) {
+    // Configura a flag de pipe e separa a string original em duas partes
     c->has_pipe = 1;
-    // substitui # por \0
-    *pipe_pos = '\0';
+    *pipe_pos = '\0';   // Corta a string no local do '#'
     
-    // remove espaços desnecessários do primeiro comando e do segundo
+    // Remove espaços desnecessários do primeiro comando e do segundo
     char *part1 = trim_spaces(line);
     char *part2 = trim_spaces(pipe_pos + 1);
     
@@ -130,21 +143,23 @@ static int parse_pipe_command(char *line, char *pipe_pos, CommandLine *c) {
         return 0;
     }
     
+    // Preenche os argumentos de ambos os comandos separadamente
     break_line(part1, c->cmd1);
     break_line(part2, c->cmd2);
     
     return 1;
 }
 
+
 static int parse_line(char *line, CommandLine *c) {
     char *pipe = strchr(line, '#');
     
-    // verifica se tem mais de um pipe
+    // Verifica se tem mais de um pipe
     if (pipe != NULL && strchr(pipe + 1, '#') != NULL) {
         return 0;
     }
     
-    // comando com pipe e comando sem pipe
+    // Comando com pipe e comando sem pipe
     if (pipe != NULL) {
         return parse_pipe_command(line, pipe, c);
     } else {
@@ -156,30 +171,32 @@ static char *read_input_line() {
     char *line = NULL;
     size_t size = 0;
     
+    // Lê uma linha inteira do terminal
     int ret = getline(&line, &size, stdin);
     if (ret == -1) {
         free(line);
         return NULL;
     }
     
-    // remove o \n
+    // Remove o \n
     line[strcspn(line, "\n")] = 0;
     return line;
 }
 
+// Descarta o que o usuário digitar se o buffer da shell já estiver cheio
 static void discard_overflow_input() {
     int ch;
     while ((ch = getchar()) != '\n' && ch != EOF);
 }
 
 void read_line(IshState *lasy) {
-    // limpando o conteudo lido quando o buffer esta cheio
+    // Se atingiu o limite de 5 comandos, ignora novas entradas
     if (lasy->count >= MAX_BUFFER) {
         discard_overflow_input();
         return;
     }
     
-    // leitura da linha
+    // Leitura da linha
     char *line = read_input_line();
     if (line == NULL) {
         if (!lasy->interactive) {
@@ -188,14 +205,14 @@ void read_line(IshState *lasy) {
         return;
     }
     
-    // remove espaços desnecessários
+    // Remove espaços desnecessários
     char *clean = trim_spaces(line);
     if (clean[0] == '\0') {
         free(line);
         return;
     }
     
-    // verifica se existe o pipe # e faz o parsing
+    // Verifica se existe o pipe # e faz o parsing
     CommandLine c; //faz parsing
     if (!parse_line(clean, &c)) {
         free(line);
@@ -204,19 +221,20 @@ void read_line(IshState *lasy) {
     
     free(line);
     
-    // se não for valido, ignora
+    // Se não for valido, ignora
     if (!validate_pipe_command(&c)) {
         free_command(c.cmd1);
         free_command(c.cmd2);
         return;
     }
     
-    // se for valido, adiciona ao buffer
+    // Se for valido, adiciona ao buffer
     lasy->buffer[lasy->count] = c;
     lasy->count++;
 }
 
 void delete_buffer(IshState *lasy) {
+    // Limpa todos os comandos processados do buffer para recomeçar o ciclo
     for (int i = 0; i < lasy->count; i++) {
         free_command(lasy->buffer[i].cmd1);
         if (lasy->buffer[i].has_pipe) {

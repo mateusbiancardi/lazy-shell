@@ -1,4 +1,4 @@
-// executa comandos internos e externos, gerencia filhos e grupos de processos
+// Executa comandos internos e externos, gerencia filhos e grupos de processos
 #include "exec.h"
 #include <unistd.h>
 #include <stdio.h>
@@ -7,7 +7,7 @@
 #include <signal.h>
 #include <stdlib.h>
 
-// adiciona pid a lista de filhos vivos
+// Adiciona o pid de um novo processo a lista de filhos vivos
 static void add_child(IshState *lasy, pid_t pid)
 {
     if (pid <= 0)
@@ -21,6 +21,7 @@ static void add_child(IshState *lasy, pid_t pid)
     lasy->has_children = 1;
 }
 
+// Remove um processo da lista de ativos quando ele termina sua execução
 void remove_child(IshState *lasy, pid_t pid)
 {
     for (int i = 0; i < lasy->child_count; i++)
@@ -38,7 +39,7 @@ void remove_child(IshState *lasy, pid_t pid)
     }
 }
 
-// impressao do status ao termino de um filho
+// Impressao do status ao termino de um filho
 static void report_child_status(pid_t pid, int status)
 {
     if (WIFEXITED(status))
@@ -62,9 +63,9 @@ static void report_child_status(pid_t pid, int status)
     printf("Processo %d terminou por causa desconhecida\n", pid);
 }
 
-// comandos internos
+// Comandos Internos
 static void reap_zombies(IshState *lasy)
-{
+{   
     if (lasy->zombie_count == 0)
     {
         printf("Não há processos zumbis.\n");
@@ -80,7 +81,8 @@ static void reap_zombies(IshState *lasy)
     }
     lasy->zombie_count = 0;
 }
-// comandos internos
+
+// Comandos Internos
 static void collect_process_groups(IshState *lasy, pid_t *groups,
                                    int *group_count)
 {
@@ -126,10 +128,10 @@ static void wait_all_children(IshState *lasy)
     int status;
     pid_t pid;
 
-    // espera qualquer filho
+    // Espera qualquer filho
     while ((pid = waitpid(-1, &status, 0)) > 0)
     {
-        // reporta como esse filho terminou
+        // Reporta como esse filho terminou
         report_child_status(pid, status);
     }
 
@@ -137,6 +139,7 @@ static void wait_all_children(IshState *lasy)
     lasy->has_children = 0;
 }
 
+// Sequência de encerramento (exit), mata grupos ativos e espera confirmação de morte de todos
 static void exit_shell(IshState *lasy)
 {
     pid_t groups[MAX_CHILDREN];
@@ -148,6 +151,7 @@ static void exit_shell(IshState *lasy)
     exit(0);
 }
 
+// Implementa a lógica de mudar o diretório atual da shell (cd)
 static int handle_cd(Command *cmd)
 {
     char *path = cmd->args[1];
@@ -170,6 +174,7 @@ static int handle_cd(Command *cmd)
     return 0;
 }
 
+// Comando interno (wait) que chama a limpeza de zumbis
 static int handle_wait(Command *cmd, IshState *lasy)
 {
     if (cmd->args[1] != NULL)
@@ -181,6 +186,7 @@ static int handle_wait(Command *cmd, IshState *lasy)
     return 0;
 }
 
+// Comando interno que dispara o desligamento seguro da shell
 static int handle_exit(Command *cmd, IshState *lasy)
 {
     if (cmd->args[1] != NULL)
@@ -192,7 +198,7 @@ static int handle_exit(Command *cmd, IshState *lasy)
     return 0;
 }
 
-// cria processo filho, configura grupo, redireciona e executa comando
+// Cria processo filho, configura grupo, redireciona e executa comando
 static void setup_child_process(pid_t group_id, int in_fd, int out_fd,
                                 int close_fd)
 {
@@ -204,14 +210,14 @@ static void setup_child_process(pid_t group_id, int in_fd, int out_fd,
     {
         setpgid(0, group_id);
     }
-    // ignora sinais no filho para nao morrer com ctrl-c
+    // Ignora sinais no filho para nao morrer com ctrl-c
     signal(SIGINT, SIG_IGN);
-    // fecha fd não usado
     if (close_fd >= 0)
     {
         close(close_fd);
     }
-    // redireciona entrada/saida
+
+    // Redirecionamento de entrada/saida
     if (in_fd >= 0)
     {
         dup2(in_fd, STDIN_FILENO);
@@ -221,7 +227,7 @@ static void setup_child_process(pid_t group_id, int in_fd, int out_fd,
         dup2(out_fd, STDOUT_FILENO);
     }
 
-    // fecha fds se foram redirecionados
+    // Fecha fds se foram redirecionados
     if (in_fd > STDERR_FILENO)
     {
         close(in_fd);
@@ -235,10 +241,10 @@ static void setup_child_process(pid_t group_id, int in_fd, int out_fd,
 static pid_t fork_exec(Command *cmd, pid_t group_id, int in_fd,
                        int out_fd, int close_fd)
 {
+    // Cria o clone do processo (fork) e substitui o código pelo programa desejado (exec)
     pid_t pid = fork();
 
-    if (pid == 0)
-    { // cria filho e faz exec
+    if (pid == 0){
         setup_child_process(group_id, in_fd, out_fd, close_fd);
         execvp(cmd->name, cmd->args);
         perror("execvp");
@@ -248,6 +254,7 @@ static pid_t fork_exec(Command *cmd, pid_t group_id, int in_fd,
     return pid;
 }
 
+// Verifica se é um comando da própria shell (cd, wait, exit) e executa
 static int execute_internal_command(CommandLine cmd, IshState *lasy)
 {
     char *prog = cmd.cmd1->name;
@@ -265,10 +272,10 @@ static int execute_internal_command(CommandLine cmd, IshState *lasy)
         return handle_wait(cmd.cmd1, lasy);
     }
 
-    return -1; // nao e comando interno
+    return -1; // Não é comando interno
 }
 
-//cria processos para comandos e escreve no pipe
+// Cria dois processos onde a saída do primeiro vira a entrada do segundo (pipe)
 static void execute_pipe_command(CommandLine cmd, IshState *lasy,
                                  pid_t *group_id)
 {
@@ -280,7 +287,7 @@ static void execute_pipe_command(CommandLine cmd, IshState *lasy,
         return;
     }
 
-    // cria primeiro processo - escreve no pipe
+    // Cria primeiro processo - escreve no pipe
     pid_t pid1 = fork_exec(cmd.cmd1, *group_id, -1, fd[1], fd[0]);
     if (pid1 < 0)
     {
@@ -295,7 +302,7 @@ static void execute_pipe_command(CommandLine cmd, IshState *lasy,
         *group_id = pid1;
     }
 
-    // cria segundo processo - le do pipe
+    // Cria segundo processo - le do pipe
     pid_t pid2 = fork_exec(cmd.cmd2, *group_id, fd[0], -1, fd[1]);
     if (pid2 < 0)
     {
@@ -312,9 +319,10 @@ static void execute_pipe_command(CommandLine cmd, IshState *lasy,
     add_child(lasy, pid2);
 }
 
+// Lança um processo externo comum sem pipes
 static void execute_simple_command(CommandLine cmd, IshState *lasy,
                                    pid_t *group_id)
-{
+{   
     pid_t pid = fork_exec(cmd.cmd1, *group_id, -1, -1, -1);
 
     if (pid < 0)
@@ -333,7 +341,7 @@ static void execute_simple_command(CommandLine cmd, IshState *lasy,
 
 void execute_command(CommandLine cmd, IshState *lasy, pid_t *group_id)
 {
-    // processos internos
+    // Processos Internos
     if (!cmd.has_pipe)
     {
         int result = execute_internal_command(cmd, lasy);
@@ -343,7 +351,7 @@ void execute_command(CommandLine cmd, IshState *lasy, pid_t *group_id)
         }
     }
 
-    // processos externos
+    // Processos Externos
     if (cmd.has_pipe)
     {
         execute_pipe_command(cmd, lasy, group_id);
@@ -354,6 +362,7 @@ void execute_command(CommandLine cmd, IshState *lasy, pid_t *group_id)
     }
 }
 
+// Esvazia a fila, executando todos os comandos acumulados no mesmo grupo de processos
 void execute_buffer(IshState *lasy)
 {
     pid_t group_id = -1;

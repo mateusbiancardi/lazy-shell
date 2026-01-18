@@ -5,7 +5,6 @@
 
 void execute_command(CommandLine cmd, IshState *lasy, pid_t *group_id);
 void execute_buffer(IshState *lasy);
-
 void remove_child(IshState *lasy, pid_t pid);
 
 #endif // EXEC_C

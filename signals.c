@@ -1,4 +1,4 @@
-//trata sinais SIGINT (Ctrl-C) e SIGCHLD (zombies)
+// Trata sinais SIGINT (Ctrl-C) e SIGCHLD (zombies)
 #include "ish.h"
 #include "exec.h"
 #include <stdio.h>
@@ -54,8 +54,6 @@ static void store_zombie(IshState *lasy, pid_t pid, int status) {
         lasy->zombie_count++;
     }
 }
-
-
 
 void handle_sigchld(int sig, IshState *lasy) {
     // guarda zombies para o comando wait
