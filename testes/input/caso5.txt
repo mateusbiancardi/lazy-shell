@@ -1,0 +1,2 @@
+echo cocada # grep coc
+^C

@@ -1,0 +1,6 @@
+lsh> lsh> lsh> lsh> lsh> lsh> lsh> 3
+2
+4
+1
+5
+lsh> 

@@ -1,0 +1,949 @@
+# LSH (Lasy Shell)
+
+## 1. VISÃO GERAL DO PROJETO
+
+A LSH é uma shell "preguiçosa" que implementa um comportamento diferente das shells convencionais:
+- **Não executa comandos imediatamente** ao serem digitados
+- **Enfileira os comandos** em um buffer de até 5 linhas
+- **Só executa quando o usuário pressiona Ctrl-C**
+
+### Por que "preguiçosa"?
+Simula uma shell lenta que só realiza o trabalho quando o usuário "perde a paciência" e pressiona Ctrl-C.
+
+## 2. ARQUITETURA DO SISTEMA
+
+### Estrutura de Arquivos
+```
+main.c      → Inicialização e loop principal
+ish.h       → Definições de estruturas e constantes
+ish.c       → Construção do estado inicial
+parser.c    → Leitura e análise de comandos
+signals.c   → Tratamento de sinais (SIGINT e SIGCHLD)
+exec.c      → Execução de comandos internos e externos
+exec.h      → Interface do módulo de execução
+```
+
+### Estruturas de Dados Principais
+
+#### Command
+```c
+typedef struct {
+    char *name;                  // Nome do executável (aponta para args[0])
+    char *args[MAX_ARGS + 2];    // Programa + até 3 argumentos + NULL
+} Command;
+```
+- Representa um comando individual
+- `name` é sempre igual a `args[0]`
+- `args[MAX_ARGS + 1]` é sempre NULL (requerido pelo execvp)
+
+#### CommandLine
+```c
+typedef struct {
+    int has_pipe;      // 1 se linha contém '#', 0 caso contrário
+    Command *cmd1;     // Primeiro comando (ou único)
+    Command *cmd2;     // Segundo comando (se houver pipe)
+} CommandLine;
+```
+- Representa uma linha completa digitada pelo usuário
+- Pode conter 1 ou 2 comandos (separados por '#')
+
+#### IshState
+```c
+typedef struct {
+    CommandLine buffer[MAX_BUFFER];     // Buffer de até 5 linhas
+    int count;                          // Comandos no buffer
+    time_t last_ctrl_c;                 // Timestamp do último Ctrl-C
+    int has_children;                   // Flag: há filhos vivos?
+    pid_t children[MAX_CHILDREN];       // PIDs dos filhos vivos
+    int child_count;                    // Quantidade de filhos
+    pid_t zombie_pids[MAX_CHILDREN];    // PIDs dos zombies
+    int zombie_status[MAX_CHILDREN];    // Status dos zombies
+    int zombie_count;                   // Quantidade de zombies
+    int interactive;                    // Indica terminal interativo
+} IshState;
+```
+
+---
+
+## 3. FLUXO DE EXECUÇÃO
+
+### 3.1 Inicialização (main.c)
+```
+1. Desativa ECHOCTL → não mostra ^C no terminal
+2. Registra handler para SIGINT (Ctrl-C)
+3. Registra handler para SIGCHLD (morte de filhos)
+4. Cria estrutura IshState
+5. Detecta modo interativo (isatty)
+6. Entra no loop infinito: imprime `lsh>` e chama read_line()
+```
+
+### 3.2 Leitura de Comandos (parser.c)
+
+**Processo do read_line():**
+```
+1. Verifica se buffer está cheio (5 comandos)
+   → Se sim: descarta a linha
+   
+2. Lê linha com getline()
+   → EOF em modo não-interativo: exit(0)
+   
+3. Remove espaços do início e fim (trim_spaces)
+
+4. Linha vazia? → descarta e retorna
+
+5. Procura pelo caractere '#'
+   → Não encontrou: comando simples
+   → Encontrou: divide em cmd1 e cmd2
+   → Mais de um '#': linha inválida, descarta
+   
+6. Tokeniza cada parte com break_line()
+   → Usa strtok() para separar por espaços
+   → Copia strings com strdup()
+   → Limita a MAX_ARGS + 1 (programa + 3 argumentos)
+   
+7. Validações:
+   - Comando vazio? → descarta
+   - Pipe com comando interno? → descarta
+   - Segundo comando vazio no pipe? → descarta
+   
+8. Adiciona ao buffer e incrementa count
+```
+
+**Exemplo de parsing:**
+```
+Entrada: "ls -l # grep txt"
+Resultado:
+  cmd1->name = "ls"
+  cmd1->args = ["ls", "-l", NULL]
+  cmd2->name = "grep"
+  cmd2->args = ["grep", "txt", NULL]
+  has_pipe = 1
+```
+
+### 3.3 Tratamento do Ctrl-C (signals.c)
+
+**handle_sigint_ctrl_c():**
+```c
+void handle_sigint_ctrl_c(int sig, IshState *lasy) {
+    time_t now = time(NULL);
+    double diff = difftime(now, lasy->last_ctrl_c);
+    
+    // CASO 1: Há comandos no buffer?
+    if (lasy->count > 0) {
+        execute_buffer(lasy);      // Executa todos
+        delete_buffer(lasy);       // Libera memória
+        lasy->count = 0;           // Esvazia buffer
+        lasy->last_ctrl_c = 0;     // Reseta timestamp
+    }
+    // CASO 2: Buffer vazio, mas há filhos vivos
+    else if (lasy->has_children) {
+        // Ctrl-C duplo em até 3 segundos?
+        if (lasy->last_ctrl_c != 0 && diff <= 3.0) {
+            printf("Ok... você venceu! Adeus!\n");
+            exit(0);
+        }
+        printf("Não posso morrer... sou lenta mas sou mãe de família!!!\n");
+        lasy->last_ctrl_c = now;   // Marca o tempo
+    }
+    // CASO 3: Buffer vazio e sem filhos
+    else {
+        printf("Ok... você venceu! Adeus!\n");
+        exit(0);
+    }
+}
+```
+
+**Fluxograma:**
+```
+Ctrl-C recebido
+     ↓
+Buffer tem comandos?
+  Sim → Executa todos → Limpa buffer → Continua
+  Não ↓
+Há filhos vivos?
+  Sim → Ctrl-C em < 3s?
+         Sim → "Ok... você venceu!" → EXIT
+         Não → "Não posso morrer..." → Continua
+  Não ↓
+"Ok... você venceu!" → EXIT
+```
+
+### 3.4 Captura de Morte de Filhos (signals.c)
+
+**handle_sigchld():**
+```c
+void handle_sigchld(int sig, IshState *lasy) {
+    int status;
+    pid_t pid;
+    
+    // Loop para capturar TODOS os filhos mortos
+    while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
+        // Guarda pid e status para o comando 'wait'
+        if (lasy->zombie_count < MAX_CHILDREN) {
+            lasy->zombie_pids[lasy->zombie_count] = pid;
+            lasy->zombie_status[lasy->zombie_count] = status;
+            lasy->zombie_count++;
+        }
+        
+        // Remove da lista de filhos vivos
+        for (int i = 0; i < lasy->child_count; i++) {
+            if (lasy->children[i] == pid) {
+                lasy->children[i] = lasy->children[lasy->child_count - 1];
+                lasy->child_count--;
+                break;
+            }
+        }
+        
+        if (lasy->child_count == 0) {
+            lasy->has_children = 0;
+        }
+    }
+}
+```
+
+**Por que WNOHANG?**
+- Não bloqueia se não houver filhos mortos
+- Handler precisa ser rápido e não-bloqueante
+
+**Por que guardar em arrays?**
+- O comando `wait` precisa informar os status depois
+- Evita perder informação dos processos mortos
+
+---
+
+## 4. EXECUÇÃO DE COMANDOS (exec.c)
+
+### 4.1 Comandos Internos
+
+#### CD (Change Directory)
+```c
+if (strcmp(prog, "cd") == 0) {
+    char *path = cmd.cmd1->args[1];
+    if (path == NULL) {
+        printf("cd: caminho ausente\n");
+        return;
+    }
+    if (cmd.cmd1->args[2] != NULL) {
+        printf("cd: muitos argumentos\n");
+        return;
+    }
+    if (chdir(path) != 0) {
+        perror("cd");
+    }
+    return;
+}
+```
+**Características:**
+- Muda diretório corrente da shell
+- Requer exatamente 1 argumento
+- Afeta próximos comandos que usarem caminhos relativos
+
+#### WAIT
+```c
+if (strcmp(prog, "wait") == 0) {
+    if (cmd.cmd1->args[1] != NULL) {
+        printf("wait: não aceita argumentos\n");
+        return;
+    }
+    reap_zombies(lasy);
+    return;
+}
+```
+**reap_zombies():**
+```c
+static void reap_zombies(IshState *lasy) {
+    if (lasy->zombie_count == 0) {
+        printf("Não há processos zumbis.\n");
+        return;
+    }
+    for (int i = 0; i < lasy->zombie_count; i++) {
+        report_child_status(lasy->zombie_pids[i], 
+                           lasy->zombie_status[i]);
+        remove_child(lasy, lasy->zombie_pids[i]);
+    }
+    lasy->zombie_count = 0;
+}
+```
+**report_child_status():**
+```c
+static void report_child_status(pid_t pid, int status) {
+    if (WIFEXITED(status)) {
+        printf("Processo %d terminou com status %d\n", 
+               pid, WEXITSTATUS(status));
+    }
+    else if (WIFSIGNALED(status)) {
+        printf("Processo %d terminou por sinal %d\n", 
+               pid, WTERMSIG(status));
+    }
+    else if (WIFSTOPPED(status)) {
+        printf("Processo %d parou por sinal %d\n", 
+               pid, WSTOPSIG(status));
+    }
+    else {
+        printf("Processo %d terminou por causa desconhecida\n", pid);
+    }
+}
+```
+
+#### EXIT
+```c
+if (strcmp(prog, "exit") == 0) {
+    if (cmd.cmd1->args[1] != NULL) {
+        printf("exit: não aceita argumentos\n");
+        return;
+    }
+    exit_shell(lasy);
+    return;
+}
+```
+**exit_shell():**
+```c
+static void exit_shell(IshState *lasy) {
+    // 1. Coleta grupos únicos
+    pid_t groups[MAX_CHILDREN];
+    int group_count = 0;
+    
+    for (int i = 0; i < lasy->child_count; i++) {
+        pid_t pgid = getpgid(lasy->children[i]);
+        if (pgid < 0) {
+            kill(lasy->children[i], SIGTERM);
+            continue;
+        }
+        // Adiciona grupo se ainda não existe na lista
+        int exists = 0;
+        for (int g = 0; g < group_count; g++) {
+            if (groups[g] == pgid) {
+                exists = 1;
+                break;
+            }
+        }
+        if (!exists) {
+            groups[group_count++] = pgid;
+            kill(-pgid, SIGTERM);  // Mata o grupo inteiro
+        }
+    }
+    
+    // 2. Aguarda todos os filhos
+    int status;
+    pid_t pid;
+    while ((pid = waitpid(-1, &status, 0)) > 0) {
+        report_child_status(pid, status);
+    }
+    
+    // 3. Finaliza
+    exit(0);
+}
+```
+
+### 4.2 Comandos Externos
+
+#### fork_exec() - Criação de Processos
+```c
+static pid_t fork_exec(Command *cmd, pid_t group_id, 
+                       int in_fd, int out_fd, int close_fd) {
+    pid_t pid = fork();
+    
+    if (pid == 0) {  // PROCESSO FILHO
+        // 1. Configura grupo de processos
+        if (group_id < 0) {
+            setpgid(0, 0);      // Cria novo grupo (líder)
+        } else {
+            setpgid(0, group_id); // Entra no grupo existente
+        }
+        
+        // 2. Ignora SIGINT (Ctrl-C não mata filhos)
+        signal(SIGINT, SIG_IGN);
+        
+        // 3. Fecha fd que não será usado
+        if (close_fd >= 0) {
+            close(close_fd);
+        }
+        
+        // 4. Redireciona entrada se necessário
+        if (in_fd >= 0) {
+            dup2(in_fd, STDIN_FILENO);
+        }
+        
+        // 5. Redireciona saída se necessário
+        if (out_fd >= 0) {
+            dup2(out_fd, STDOUT_FILENO);
+        }
+        
+        // 6. Fecha fds após redirecionamento
+        if (in_fd > STDERR_FILENO) close(in_fd);
+        if (out_fd > STDERR_FILENO) close(out_fd);
+        
+        // 7. Executa o programa
+        execvp(cmd->name, cmd->args);
+        perror("execvp");
+        _exit(127);
+    }
+    
+    return pid;  // PROCESSO PAI retorna PID do filho
+}
+```
+
+#### Execução com Pipe
+```c
+if (cmd.has_pipe == 1) {
+    // 1. Cria o pipe
+    int fd[2];
+    if (pipe(fd) != 0) {
+        perror("pipe");
+        return;
+    }
+    // fd[0] = leitura, fd[1] = escrita
+    
+    // 2. Cria primeiro processo (escreve no pipe)
+    pid_t pid1 = fork_exec(cmd.cmd1, *group_id, -1, fd[1], fd[0]);
+    //                      entrada: stdin normal
+    //                      saída: fd[1] (pipe)
+    //                      fecha: fd[0] (não usa)
+    
+    if (pid1 < 0) {
+        perror("fork");
+        close(fd[0]);
+        close(fd[1]);
+        return;
+    }
+    
+    // Define grupo (primeiro processo é o líder)
+    if (*group_id < 0) {
+        *group_id = pid1;
+    }
+    
+    // 3. Cria segundo processo (lê do pipe)
+    pid_t pid2 = fork_exec(cmd.cmd2, *group_id, fd[0], -1, fd[1]);
+    //                      entrada: fd[0] (pipe)
+    //                      saída: stdout normal
+    //                      fecha: fd[1] (não usa)
+    
+    if (pid2 < 0) {
+        perror("fork");
+        close(fd[0]);
+        close(fd[1]);
+        return;
+    }
+    
+    // 4. PAI fecha ambos os fds
+    close(fd[0]);
+    close(fd[1]);
+    
+    // 5. Registra filhos
+    add_child(lasy, pid1);
+    add_child(lasy, pid2);
+}
+```
+
+**Diagrama do Pipe:**
+```
+         PAI (shell)
+            |
+    +-------+-------+
+    |               |
+  PID1            PID2
+ls -l           grep txt
+    |               |
+stdout→[fd[1]] [fd[0]]→stdin
+        ↓       ↑
+        +-------+
+          PIPE
+```
+
+#### Execução Simples (sem pipe)
+```c
+if (cmd.has_pipe == 0) {
+    pid_t pid = fork_exec(cmd.cmd1, *group_id, -1, -1, -1);
+    //                    entrada: stdin normal
+    //                    saída: stdout normal
+    //                    não fecha nada extra
+    
+    if (pid < 0) {
+        perror("fork");
+        return;
+    }
+    
+    if (*group_id < 0) {
+        *group_id = pid;
+    }
+    
+    add_child(lasy, pid);
+}
+```
+
+### 4.3 execute_buffer() - Execução do Buffer
+
+```c
+void execute_buffer(IshState *lasy) {
+    pid_t group_id = -1;  // Começa sem grupo
+    
+    for (int i = 0; i < lasy->count; i++) {
+        execute_command(lasy->buffer[i], lasy, &group_id);
+        // group_id é passado por referência
+        // Primeiro externo cria o grupo
+        // Demais entram no mesmo grupo
+    }
+}
+```
+
+**Exemplo de execução:**
+```
+Buffer: ["ls", "cd ..", "ps aux"]
+group_id inicial: -1
+
+1. execute_command("ls")
+   - Externo, group_id == -1
+   - fork_exec cria processo PID 1234
+   - setpgid(0, 0) → cria grupo 1234
+   - group_id = 1234
+
+2. execute_command("cd ..")
+   - Interno
+   - chdir("..") no processo pai
+   - group_id continua 1234
+
+3. execute_command("ps aux")
+   - Externo, group_id == 1234
+   - fork_exec cria processo PID 1235
+   - setpgid(0, 1234) → entra no grupo 1234
+   - group_id continua 1234
+
+Resultado: ls e ps estão no grupo 1234
+```
+
+---
+
+## 5. CONCEITOS IMPORTANTES
+
+### 5.1 Por que Background?
+
+**Processos em background:**
+- Não bloqueiam a shell
+- Shell retorna ao loop imediatamente
+- Não recebem sinais de Ctrl-C, Ctrl-Z, etc
+- Precisam de tratamento especial para I/O no terminal
+
+**Na LSH:**
+```c
+// Cada filho ignora SIGINT
+signal(SIGINT, SIG_IGN);
+
+// Todos ficam em background (mesmo grupo)
+setpgid(0, group_id);
+```
+
+### 5.2 Grupos de Processos
+
+**Por que usar grupos?**
+1. **Facilita gerenciamento**: Um sinal para o grupo atinge todos
+2. **Isolamento**: Grupo da shell fica separado dos comandos
+3. **Cleanup**: No exit, mata grupos inteiros com `kill(-pgid, SIGTERM)`
+
+**Como funciona:**
+```c
+// Primeiro filho
+setpgid(0, 0);  // pid=0 significa "eu mesmo"
+                // pgid=0 significa "usar meu PID como PGID"
+                // Resultado: processo vira líder de novo grupo
+
+// Demais filhos
+setpgid(0, leader_pid);  // Entram no grupo do líder
+```
+
+### 5.3 Redirecionamento com dup2()
+
+**O que faz dup2(old_fd, new_fd)?**
+- Duplica o descritor `old_fd` para `new_fd`
+- Fecha `new_fd` se já estiver aberto
+- Resultado: `new_fd` aponta para o mesmo arquivo que `old_fd`
+
+**No pipe:**
+```c
+// Processo 1 (escritor)
+dup2(fd[1], STDOUT_FILENO);  // stdout → pipe
+// Agora printf() escreve no pipe
+
+// Processo 2 (leitor)
+dup2(fd[0], STDIN_FILENO);   // pipe → stdin
+// Agora scanf() lê do pipe
+```
+
+**Por que fechar os fds originais?**
+```c
+close(fd[0]);  // Fecha após dup2
+close(fd[1]);
+```
+- Cada pipe tem contador de referências
+- Pipe só fecha quando TODOS os fds forem fechados
+- Se não fechar, processo pode ficar esperando eternamente
+
+### 5.4 Sinais e Handlers
+
+**SIGINT (Ctrl-C):**
+- Gerado quando usuário pressiona Ctrl-C
+- Normalmente mata o processo
+- LSH captura e usa para executar buffer
+
+**SIGCHLD:**
+- Gerado quando filho morre, para, ou continua
+- LSH captura para guardar status dos zombies
+- Evita perder informação de processos mortos
+
+**Por que signal-safe?**
+Handlers de sinais devem ser seguros:
+- Não usar malloc/free
+- Não usar printf (tecnicamente unsafe, mas tolerado)
+- Usar apenas funções assíncronas seguras
+
+### 5.5 Zombies e Wait
+
+**O que é um zombie?**
+- Processo que terminou mas ainda tem entrada na tabela
+- Mantém PID e status de saída
+- Precisa ser "colhido" pelo pai com wait()
+
+**Fluxo na LSH:**
+```
+1. Filho termina
+   ↓
+2. SIGCHLD dispara
+   ↓
+3. handle_sigchld() chama waitpid(WNOHANG)
+   ↓
+4. Guarda pid e status em arrays
+   ↓
+5. Usuário digita "wait"
+   ↓
+6. reap_zombies() imprime status guardados
+   ↓
+7. Arrays são limpos
+```
+
+---
+
+## 6. FLUXOGRAMA COMPLETO
+
+```
+┌─────────────────────────────────────────────┐
+│              INICIALIZAÇÃO                  │
+│  - Desativa ECHOCTL                        │
+│  - Registra handlers                       │
+│  - Cria IshState                           │
+└─────────────┬───────────────────────────────┘
+              │
+              ▼
+┌─────────────────────────────────────────────┐
+│              LOOP PRINCIPAL                 │
+│           while(1) {                        │
+│             read_line()                     │
+│           }                                 │
+└─────────────┬───────────────────────────────┘
+              │
+              ▼
+┌─────────────────────────────────────────────┐
+│            READ_LINE()                      │
+│  1. Buffer cheio? → descarta               │
+│  2. Lê linha                               │
+│  3. Trim espaços                           │
+│  4. Vazia? → retorna                       │
+│  5. Procura '#'                            │
+│  6. Tokeniza comando(s)                    │
+│  7. Valida                                 │
+│  8. Adiciona ao buffer                     │
+└─────────────┬───────────────────────────────┘
+              │
+         [CTRL-C]
+              │
+              ▼
+┌─────────────────────────────────────────────┐
+│        HANDLE_SIGINT_CTRL_C()               │
+│                                             │
+│  Buffer tem comandos?                       │
+│    SIM → execute_buffer()                   │
+│         delete_buffer()                     │
+│         retorna ao loop                     │
+│                                             │
+│  Há filhos vivos?                          │
+│    SIM → Ctrl-C em < 3s?                   │
+│           SIM → exit(0)                     │
+│           NÃO → mensagem + marca tempo      │
+│                                             │
+│    NÃO → exit(0)                           │
+└─────────────┬───────────────────────────────┘
+              │
+              ▼
+┌─────────────────────────────────────────────┐
+│         exec_BUFFER()                    │
+│  group_id = -1                             │
+│  for cada comando:                         │
+│    execute_command()                       │
+└─────────────┬───────────────────────────────┘
+              │
+              ▼
+┌─────────────────────────────────────────────┐
+│        exec_COMMAND()                    │
+│                                             │
+│  Interno (cd/wait/exit)?                   │
+│    SIM → executa e retorna                 │
+│                                             │
+│  Tem pipe?                                 │
+│    SIM → pipe()                            │
+│         fork_exec(cmd1, stdin, pipe_wr)    │
+│         fork_exec(cmd2, pipe_rd, stdout)   │
+│         close pipes                         │
+│         add_child × 2                      │
+│                                             │
+│    NÃO → fork_exec(cmd1, stdin, stdout)    │
+│         add_child                          │
+└─────────────┬───────────────────────────────┘
+              │
+              ▼
+┌─────────────────────────────────────────────┐
+│          FORK_EXEC()                        │
+│                                             │
+│  PAI:                                       │
+│    - Retorna PID do filho                   │
+│                                             │
+│  FILHO:                                     │
+│    1. setpgid() → entra no grupo           │
+│    2. signal(SIGINT, SIG_IGN)              │
+│    3. dup2() → redireciona I/O             │
+│    4. close() → fecha fds extras           │
+│    5. execvp() → executa programa          │
+└─────────────────────────────────────────────┘
+
+         [FILHO MORRE]
+              │
+              ▼
+┌─────────────────────────────────────────────┐
+│         HANDLE_SIGCHLD()                    │
+│  while waitpid(WNOHANG):                   │
+│    - Guarda pid e status                   │
+│    - Remove de children[]                  │
+│    - Atualiza has_children                 │
+└─────────────────────────────────────────────┘
+```
+
+---
+
+## 7. CASOS DE USO E EXEMPLOS
+
+**Nota:** o prompt `lsh>` é exibido em todas as execuções. Nos testes via arquivo/FIFO, ele aparece na saída capturada.
+
+### Exemplo 1: Comandos Simples
+```
+lsh> ls
+lsh> cd ..
+lsh> ps
+lsh> [Ctrl-C]
+
+Execução:
+1. fork() → execvp("ls") em background, grupo X
+2. chdir("..")
+3. fork() → execvp("ps") em background, grupo X
+```
+
+### Exemplo 2: Pipe
+```
+lsh> ls -l # grep txt
+lsh> [Ctrl-C]
+
+Execução:
+1. pipe() cria fd[0] e fd[1]
+2. fork() → ls -l com stdout=fd[1], grupo Y
+3. fork() → grep txt com stdin=fd[0], grupo Y
+4. close(fd[0]) e close(fd[1]) no pai
+```
+
+### Exemplo 3: Ctrl-C com Filhos Vivos
+```
+lsh> sleep 10
+lsh> [Ctrl-C]
+Execução: sleep 10 em background
+lsh> [Ctrl-C após 1s]
+Saída: "Não posso morrer... sou lenta mas sou mãe de família!!!"
+lsh> [Ctrl-C após 2s]
+Saída: "Ok... você venceu! Adeus!"
+EXIT
+```
+
+### Exemplo 4: Comando Wait
+```
+lsh> sleep 1
+lsh> [Ctrl-C]
+... (sleep termina)
+lsh> wait
+lsh> [Ctrl-C]
+Saída: "Processo 1234 terminou com status 0"
+```
+
+### Exemplo 5: Buffer Cheio
+```
+lsh> ls        # comando 1
+lsh> ps        # comando 2
+lsh> pwd       # comando 3
+lsh> date      # comando 4
+lsh> whoami    # comando 5
+lsh> echo hello  # descartado (buffer cheio)
+lsh> [Ctrl-C]
+Execução: apenas ls, ps, pwd, date, whoami
+```
+
+---
+
+## 8. DECISÕES DE IMPLEMENTAÇÃO
+
+### 8.1 Por que usar strdup()?
+```c
+cmd->args[i] = strdup(token);
+```
+- `strtok()` modifica a string original
+- `strdup()` cria cópia independente
+- Permite liberar memória depois com `free()`
+
+### 8.2 Por que guardar zombies?
+- `wait` deve informar status de filhos mortos
+- Handler SIGCHLD não pode usar printf() diretamente
+- Solução: guardar em arrays e processar depois
+
+### 8.3 Por que group_id por referência?
+```c
+void execute_command(CommandLine cmd, IshState *lasy, pid_t *group_id)
+```
+- Primeiro comando cria o grupo
+- Demais comandos entram no mesmo grupo
+- Passar por referência mantém o valor entre chamadas
+
+### 8.4 Por que fechar fds no filho?
+```c
+if (close_fd >= 0) close(close_fd);
+if (in_fd > STDERR_FILENO) close(in_fd);
+```
+- Evita leak de descritores
+- Garante que pipe fecha corretamente
+- Processo não fica com fds desnecessários
+
+---
+
+## 9. LIMITAÇÕES E RESTRIÇÕES
+
+1. **Buffer limitado a 5 comandos**
+   - Acima disso, comandos são descartados
+   
+2. **Máximo 3 argumentos por comando**
+   - MAX_ARGS = 3 (argumentos, sem contar o programa)
+   
+3. **Apenas 2 comandos por pipe**
+   - Pipe simples com '#'
+   - Não suporta múltiplos pipes
+   
+4. **Comandos internos não usam pipe**
+   - "cd / # ls" é inválido
+   
+5. **Máximo 128 filhos simultâneos**
+   - Definido por MAX_CHILDREN
+
+---
+
+## 10. TESTES E VALIDAÇÃO
+
+### Casos de Teste Essenciais
+
+1. **Comando simples**
+   - `ls` + Ctrl-C
+   
+2. **Múltiplos comandos**
+   - `ls`, `pwd`, `date` + Ctrl-C
+   
+3. **Pipe**
+   - `ls -l # grep txt` + Ctrl-C
+   
+4. **Comando interno**
+   - `cd /tmp`, `pwd` + Ctrl-C
+   
+5. **Buffer cheio**
+   - 6 comandos (último descartado)
+   
+6. **Ctrl-C duplo**
+   - Sleep em background + dois Ctrl-C em < 3s
+   
+7. **Wait**
+   - Sleep + wait após término
+   
+8. **Exit**
+   - Sleep em background + exit
+
+---
+
+## 11. PONTOS PARA A APRESENTAÇÃO
+
+### O que destacar:
+
+1. **Arquitetura modular**
+   - Separação clara de responsabilidades
+   - Cada arquivo tem função específica
+   
+2. **Tratamento robusto de sinais**
+   - SIGINT não mata filhos
+   - SIGCHLD captura status
+   - Ctrl-C duplo em 3s
+   
+3. **Gerenciamento de memória**
+   - strdup() para copiar strings
+   - free() em delete_buffer()
+   - Sem memory leaks
+   
+4. **Grupos de processos**
+   - Todos os comandos no mesmo grupo
+   - Facilita gerenciamento
+   - Kill eficiente no exit
+   
+5. **Redirecionamento com pipe**
+   - dup2() para stdin/stdout
+   - Close correto dos fds
+   - Comunicação entre processos
+
+### Perguntas Esperadas:
+
+**Q: Por que o buffer só executa no Ctrl-C?**
+A: É a proposta do trabalho - simular uma shell preguiçosa que só trabalha quando o usuário "força" com Ctrl-C.
+
+**Q: Por que usar setpgid()?**
+A: Para colocar todos os processos externos no mesmo grupo de background, permitindo gerenciamento conjunto e impedindo que Ctrl-C os mate.
+
+**Q: Como funciona o pipe com '#'?**
+A: O parser divide em cmd1 e cmd2. Criamos pipe(), redirecionamos stdout do cmd1 para fd[1] e stdin do cmd2 para fd[0] usando dup2().
+
+**Q: Por que guardar os status no SIGCHLD?**
+A: O comando `wait` precisa informar o status de processos mortos. O handler guarda em arrays para processar depois.
+
+**Q: O que acontece se digitar mais de 5 comandos?**
+A: Os comandos acima do limite são simplesmente descartados. O buffer só comporta 5 linhas.
+
+**Q: Por que signal(SIGINT, SIG_IGN) nos filhos?**
+A: Para que processos em background não sejam mortos por Ctrl-C do terminal. Apenas a shell decide o que fazer.
+
+---
+
+## 12. BIBLIOGRAFIA
+
+- Kay A. Robbins, Steven Robbins, "UNIX Systems Programming: Communication, Concurrency and Threads"
+- Manual pages: fork(2), execvp(3), signal(2), waitpid(2), pipe(2), dup2(2), setpgid(2)
+- GNU libc manual: Foreground and Background processes
+- Linux man7.org: Process groups and sessions
+
+---
+
+## RESUMO EXECUTIVO
+
+A LSH implementa uma shell preguiçosa que:
+- ✅ Enfileira até 5 comandos em buffer
+- ✅ Executa somente após Ctrl-C
+- ✅ Suporta comandos internos (cd, wait, exit)
+- ✅ Cria processos externos em background no mesmo grupo (setpgid)
+- ✅ Implementa pipe com '#' entre 2 comandos
+- ✅ Filhos ignoram SIGINT
+- ✅ Ctrl-C duplo em 3s finaliza shell
+- ✅ Wait informa causa da morte (status ou sinal)
+- ✅ Exit mata grupos ativos e aguarda liberação dos filhos
+- ✅ Gerenciamento robusto de memória e sinais
